@@ -191,7 +191,6 @@ struct SubscriptionRow: View {
                     if let plan = snapshot?.planName {
                         Text(plan).font(Theme.mono(10)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    PinButton(store: store, subscription: subscription)
                     Spacer(minLength: 4)
                     if let window {
                         StatusRing(status: status, stale: stale)
@@ -213,23 +212,30 @@ struct SubscriptionRow: View {
                         color: Theme.color(for: status, harness: subscription.harness)
                     )
                     HStack(spacing: 0) {
-                        // The window label gives way first; pace and reset time stay readable.
+                        // Short pieces so the line fits: "weekly +2 · 41% behind      resets 2d 20h".
                         Text(metaLine(window: window, extraWindows: (snapshot?.windows.count ?? 1) - 1))
                             .foregroundStyle(.secondary)
-                            .truncationMode(.middle)
                         if let pace {
                             Text(" · \(Format.pace(pace))")
                                 .foregroundStyle(pace.deltaPercent > 0 ? Theme.warn : .secondary)
-                                .layoutPriority(2)
                         }
                         if let snapshot, stale || now.timeIntervalSince(snapshot.fetchedAt) > 10 * 60 {
-                            Text(" · \(Format.age(snapshot.fetchedAt, now: now))").foregroundStyle(.secondary).layoutPriority(2)
+                            Text(" · \(Format.age(snapshot.fetchedAt, now: now))").foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
-                        Text(Format.resets(window.resetsAt, now: now)).foregroundStyle(.secondary).layoutPriority(1)
+                        Text(Format.resetsShort(window.resetsAt, now: now)).foregroundStyle(.secondary).layoutPriority(1)
                     }
                     .font(Theme.mono(10))
                     .lineLimit(1)
+                    .padding(.top, 3)
+                } else if snapshot != nil, snapshot?.spend == nil, usage.issue == nil {
+                    Text("No usage limits reported for this plan")
+                        .font(Theme.mono(10))
+                        .foregroundStyle(.secondary)
+                } else if usage.isLoading {
+                    Text("Loading…")
+                        .font(Theme.mono(10))
+                        .foregroundStyle(.secondary)
                 }
                 if let spend = snapshot?.spend {
                     SpendLine(spend: spend, budget: subscription.api?.monthlyBudget, now: now, showsReset: window == nil)
@@ -245,8 +251,10 @@ struct SubscriptionRow: View {
         .accessibilityLabel(accessibilityLabel(window: window))
     }
 
+    /// The window's short name ("weekly" for "weekly · all models"), plus how many other windows there are.
     private func metaLine(window: UsageWindow, extraWindows: Int) -> String {
-        extraWindows > 0 ? "\(window.label) +\(extraWindows)" : window.label
+        let name = window.label.components(separatedBy: " · ").first ?? window.label
+        return extraWindows > 0 ? "\(name) +\(extraWindows)" : name
     }
 
     private func accessibilityLabel(window: UsageWindow?) -> String {
@@ -277,7 +285,7 @@ struct SpendLine: View {
                 .foregroundStyle(overBudget ? Theme.warn : .secondary)
             Spacer(minLength: 8)
             if showsReset {
-                Text(Format.resets(spend.periodEnd, now: now))
+                Text(Format.resetsShort(spend.periodEnd, now: now))
             }
         }
         .font(Theme.mono(10))

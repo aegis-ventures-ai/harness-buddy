@@ -93,6 +93,12 @@ enum Format {
         return "resets in \(duration(date.timeIntervalSince(now)))"
     }
 
+    /// "resets 2d 20h", for tight lines.
+    static func resetsShort(_ date: Date?, now: Date) -> String {
+        guard let date else { return "" }
+        return "resets \(duration(date.timeIntervalSince(now)))"
+    }
+
     static func age(_ date: Date, now: Date) -> String {
         let seconds = now.timeIntervalSince(date)
         return seconds < 60 ? "just now" : "\(duration(seconds)) old"
