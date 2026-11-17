@@ -1,0 +1,187 @@
+import AppKit
+import HarnessButlerKit
+import SwiftUI
+
+/// The menubar item: percent mode (M-2), status colours with a glyph (M-3),
+/// left-click popover and right-click menu (M-5), tooltip (M-6).
+final class StatusItemController: NSObject, NSPopoverDelegate {
+    private let store: UsageStore
+    private let openSettings: () -> Void
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let popover = NSPopover()
+    private var clock: Timer?
+
+    init(store: UsageStore, openSettings: @escaping () -> Void) {
+        self.store = store
+        self.openSettings = openSettings
+        super.init()
+
+        popover.behavior = .transient
+        popover.animates = false
+        popover.delegate = self
+        popover.contentViewController = NSHostingController(rootView: PopoverView(
+            store: store,
+            openSettings: { [weak self] in self?.closePopoverThen(openSettings) }
+        ))
+
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(clicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.imagePosition = .imageLeading
+        }
+        statusItem.autosaveName = "HarnessButlerStatusItem"
+
+        observeStore()
+        // Countdowns and pace move with time even when data doesn't.
+        clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.render() }
+        }
+    }
+
+    // MARK: - Rendering
+
+    private func observeStore() {
+        withObservationTracking {
+            render()
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeStore() }
+        }
+    }
+
+    private func render() {
+        guard let button = statusItem.button else { return }
+        let now = Date.now
+        let pinned = store.pinned
+        let title = MenuBarTitle.attributedString(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now)
+        if title.length == 0 {
+            button.attributedTitle = NSAttributedString()
+            button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Harness Butler")
+        } else {
+            button.image = nil
+            button.attributedTitle = title
+        }
+        button.toolTip = MenuBarTitle.tooltip(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now)
+        button.setAccessibilityLabel(button.toolTip ?? "Harness Butler")
+    }
+
+    #if DEBUG
+    /// `--open-popover`: show the popover at launch (for screenshots and UI checks).
+    func openPopoverForDebugging() {
+        guard let button = statusItem.button, !popover.isShown else { return }
+        togglePopover(button)
+    }
+    #endif
+
+    // MARK: - Clicks
+
+    @objc private func clicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+            showMenu()
+        } else {
+            togglePopover(sender)
+        }
+    }
+
+    private func togglePopover(_ button: NSStatusBarButton) {
+        if popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        store.refreshAll(.popoverOpened)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
+    private func showMenu() {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r").target = self
+        menu.addItem(withTitle: "Settings…", action: #selector(settings), keyEquivalent: ",").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit Harness Butler", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil // keep left-click for the popover
+    }
+
+    @objc private func refresh() { store.refreshAll(.manual) }
+    @objc private func settings() { openSettings() }
+
+    private func closePopoverThen(_ action: @escaping () -> Void) {
+        popover.performClose(nil)
+        action()
+    }
+}
+
+/// Builds the percent-mode title: one `glyph NN%` segment per pinned subscription, in list order.
+enum MenuBarTitle {
+    static func attributedString(for items: [(Subscription, SubscriptionUsage)], now: Date) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium)
+        for (index, (subscription, usage)) in items.enumerated() {
+            if index > 0 { result.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
+
+            let snapshot = usage.snapshot?.current(at: now)
+            let window = snapshot.flatMap { UsageRules.headlineWindow(of: $0, at: now) }
+            let status = window.map { UsageRules.status(of: $0, at: now) } ?? .onTrack
+            let stale = usage.issue != nil
+
+            let color: NSColor = switch status {
+            case .limited: NSColor(hex: 0xEC6F6F)
+            case .atRisk: NSColor(hex: 0xE8B553)
+            case .onTrack: stale ? .secondaryLabelColor : .labelColor
+            }
+
+            result.append(glyph(for: subscription.harness, color: Theme.nsColor(for: subscription.harness), font: font))
+            let text = window.map { Format.percent($0.remainingPercent) } ?? "–"
+            result.append(NSAttributedString(string: "\u{2009}" + text, attributes: [.font: font, .foregroundColor: color]))
+
+            // Never colour-only (M-3): at risk and limited also get a symbol.
+            let marker: String? = switch status {
+            case .atRisk: "exclamationmark.triangle.fill"
+            case .limited: "xmark.octagon.fill"
+            case .onTrack: stale ? "clock.badge.exclamationmark" : nil
+            }
+            if let marker {
+                result.append(NSAttributedString(string: "\u{2009}", attributes: [.font: font]))
+                result.append(symbol(marker, color: color, font: font, size: 9))
+            }
+        }
+        return result
+    }
+
+    private static func glyph(for harness: Harness, color: NSColor, font: NSFont) -> NSAttributedString {
+        let name = switch harness {
+        case .claude: "sparkle"
+        case .codex: "hexagon"
+        case .grok: "bolt.horizontal"
+        }
+        return symbol(name, color: color, font: font, size: 10)
+    }
+
+    private static func symbol(_ name: String, color: NSColor, font: NSFont, size: CGFloat) -> NSAttributedString {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else {
+            return NSAttributedString()
+        }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        let y = (font.capHeight - image.size.height) / 2
+        attachment.bounds = CGRect(x: 0, y: y, width: image.size.width, height: image.size.height)
+        return NSAttributedString(attachment: attachment)
+    }
+
+    /// M-6 tooltip and VoiceOver label: name, % left, reset per pinned subscription.
+    static func tooltip(for items: [(Subscription, SubscriptionUsage)], now: Date) -> String? {
+        guard !items.isEmpty else { return "Harness Butler — no pinned subscriptions" }
+        return items.map { subscription, usage in
+            guard let snapshot = usage.snapshot?.current(at: now),
+                  let window = UsageRules.headlineWindow(of: snapshot, at: now) else {
+                return "\(subscription.name): \(usage.issue?.message ?? "loading…")"
+            }
+            return "\(subscription.name): \(Format.percent(window.remainingPercent)) left (\(window.label)), \(Format.resets(window.resetsAt, now: now))"
+        }.joined(separator: "\n")
+    }
+}

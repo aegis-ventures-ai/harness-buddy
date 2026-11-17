@@ -1,0 +1,69 @@
+# XcodeGen spec. Generate the project with `make project` (or `xcodegen generate`).
+# The generated HarnessButler.xcodeproj is not committed.
+name: HarnessButler
+options:
+  bundleIdPrefix: ai.aegisventures
+  deploymentTarget:
+    macOS: "27.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+packages:
+  HarnessButlerKit:
+    path: Packages/HarnessButlerKit
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: 0.1.0
+    CURRENT_PROJECT_VERSION: 1
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  HarnessButler:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/HarnessButler
+    dependencies:
+      - package: HarnessButlerKit
+    info:
+      path: App/HarnessButler/Info.plist
+      properties:
+        CFBundleName: Harness Butler
+        CFBundleDisplayName: Harness Butler
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        # Menubar-only: no Dock icon, no main menu.
+        LSUIElement: true
+        NSPrincipalClass: NSApplication
+    entitlements:
+      # Non-sandboxed by design (requirements §6): the app spawns /usr/bin/security and the
+      # harness CLIs and reads their home directories. Hardened Runtime + notarization still apply.
+      path: App/HarnessButler/HarnessButler.entitlements
+      properties: {}
+    settings:
+      base:
+        PRODUCT_NAME: Harness Butler
+        PRODUCT_BUNDLE_IDENTIFIER: ai.aegisventures.harnessbutler
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+schemes:
+  HarnessButler:
+    build:
+      targets:
+        HarnessButler: all
+    run:
+      config: Debug
+    archive:
+      config: Release
