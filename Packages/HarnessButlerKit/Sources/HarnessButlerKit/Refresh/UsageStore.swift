@@ -18,6 +18,18 @@ public enum SubscriptionGroup: Int, CaseIterable, Sendable, Comparable {
     }
 
     public static func < (lhs: SubscriptionGroup, rhs: SubscriptionGroup) -> Bool { lhs.rawValue < rhs.rawValue }
+
+    /// U-8 grouping. Errors and data older than `Harness.staleAfter` are stale; otherwise the worst window decides.
+    /// A subscription with nothing yet (still loading) counts as on track.
+    public static func classify(_ usage: SubscriptionUsage, harness: Harness, at now: Date) -> SubscriptionGroup {
+        guard let snapshot = usage.snapshot else { return usage.issue == nil ? .onTrack : .stale }
+        if usage.issue != nil || now.timeIntervalSince(snapshot.fetchedAt) > harness.staleAfter { return .stale }
+        switch UsageRules.status(of: snapshot.current(at: now), at: now) {
+        case .limited: return .limited
+        case .atRisk: return .atRisk
+        case .onTrack: return .onTrack
+        }
+    }
 }
 
 /// What the UI knows about one subscription.
@@ -47,6 +59,8 @@ public final class UsageStore {
     public private(set) var saveError: String?
 
     @ObservationIgnored private let file: SubscriptionFile
+    @ObservationIgnored private let cacheFile: UsageCacheFile
+    @ObservationIgnored private var cacheSaveTask: Task<Void, Never>?
     @ObservationIgnored private let providers: [Harness: any UsageProvider]
     @ObservationIgnored private let appVersion: String
     @ObservationIgnored private let homeDirectory: URL
@@ -57,12 +71,14 @@ public final class UsageStore {
 
     public init(
         file: SubscriptionFile = .standard,
+        cacheFile: UsageCacheFile = .standard,
         providers: [any UsageProvider] = [ClaudeUsageProvider(), CodexAppServerUsageProvider(), GrokACPUsageProvider()],
         appVersion: String,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         onBattery: @escaping @Sendable () -> Bool = { PowerSource.shouldConserve }
     ) {
         self.file = file
+        self.cacheFile = cacheFile
         self.providers = Dictionary(uniqueKeysWithValues: providers.map { ($0.harness, $0) })
         self.appVersion = appVersion
         self.homeDirectory = homeDirectory
@@ -84,6 +100,9 @@ public final class UsageStore {
         } catch {
             saveError = "Couldn't read saved subscriptions: \(error.localizedDescription)"
         }
+        for (id, snapshot) in cacheFile.load() where subscriptions.contains(where: { $0.id == id }) {
+            usage[id] = SubscriptionUsage(snapshot: snapshot)
+        }
         try? FileManager.default.createDirectory(at: scratchDirectory, withIntermediateDirectories: true)
         environment = await HarnessEnvironment.resolve(homeDirectory: homeDirectory)
         refreshAll(.launch)
@@ -96,9 +115,13 @@ public final class UsageStore {
         }
     }
 
+    /// Stop polling and write the snapshot cache now (call on quit).
     public func stop() {
         ticker?.cancel()
         ticker = nil
+        cacheSaveTask?.cancel()
+        cacheSaveTask = nil
+        try? cacheFile.save(usage.compactMapValues(\.snapshot))
     }
 
     // MARK: - Queries
@@ -108,14 +131,12 @@ public final class UsageStore {
     public func usage(for id: UUID) -> SubscriptionUsage { usage[id] ?? SubscriptionUsage() }
 
     public func group(for subscription: Subscription, at now: Date = .now) -> SubscriptionGroup {
-        let entry = usage(for: subscription.id)
-        guard let snapshot = entry.snapshot else { return entry.issue == nil ? .onTrack : .stale }
-        if entry.issue != nil { return .stale }
-        switch UsageRules.status(of: snapshot.current(at: now), at: now) {
-        case .limited: return .limited
-        case .atRisk: return .atRisk
-        case .onTrack: return .onTrack
-        }
+        SubscriptionGroup.classify(usage(for: subscription.id), harness: subscription.harness, at: now)
+    }
+
+    /// True when the subscription's data is stale or errored (dims it in the menubar).
+    public func isStale(_ subscription: Subscription, at now: Date = .now) -> Bool {
+        group(for: subscription, at: now) == .stale
     }
 
     // MARK: - Refresh
@@ -160,6 +181,18 @@ public final class UsageStore {
         }
         entry.issue = report.issue
         usage[id] = entry
+        if report.snapshot != nil { scheduleCacheSave() }
+    }
+
+    /// Coalesce writes: at most one save every few seconds.
+    private func scheduleCacheSave() {
+        guard cacheSaveTask == nil else { return }
+        cacheSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self else { return }
+            self.cacheSaveTask = nil
+            try? self.cacheFile.save(self.usage.compactMapValues(\.snapshot))
+        }
     }
 
     // MARK: - Editing (U-2, M-1)
@@ -188,6 +221,7 @@ public final class UsageStore {
         subscriptions.removeAll { $0.id == id }
         usage[id] = nil
         persist()
+        scheduleCacheSave()
     }
 
     public func setPinned(_ id: UUID, _ pinned: Bool) {
@@ -196,11 +230,14 @@ public final class UsageStore {
         persist()
     }
 
+    /// Reorder within the pinned subset (Settings → Menubar); unpinned subscriptions keep their slots.
+    public func movePinned(fromOffsets source: IndexSet, toOffset destination: Int) {
+        subscriptions = SubscriptionOrdering.movingPinned(subscriptions, fromOffsets: source, toOffset: destination)
+        persist()
+    }
+
     public func move(fromOffsets source: IndexSet, toOffset destination: Int) {
-        let moving = source.map { subscriptions[$0] }
-        let insertAt = destination - source.count(in: 0..<destination)
-        for index in source.reversed() { subscriptions.remove(at: index) }
-        subscriptions.insert(contentsOf: moving, at: insertAt)
+        subscriptions = SubscriptionOrdering.moving(subscriptions, fromOffsets: source, toOffset: destination)
         persist()
     }
 

@@ -12,17 +12,27 @@ let providers: [Harness: any UsageProvider] = [
     .claude: ClaudeUsageProvider(), .codex: CodexAppServerUsageProvider(), .grok: GrokACPUsageProvider(),
 ]
 let forceLive = CommandLine.arguments.contains("--live")
+// --offline-codex: hide the codex binary to exercise the session-log fallback.
+let offlineCodex = CommandLine.arguments.contains("--offline-codex")
+let claude = ClaudeUsageProvider()
 
 for subscription in subscriptions {
     let now = Date.now
+    let env = offlineCodex && subscription.harness == .codex
+        ? HarnessEnvironment(homeDirectory: home, searchPath: [], baseEnvironment: environment.baseEnvironment)
+        : environment
     let context = UsageFetchContext(
-        environment: environment, now: now,
+        environment: env, now: now,
         acceptableCacheAge: forceLive ? 0 : subscription.harness.refreshInterval,
         appVersion: "probe", scratchDirectory: scratch
     )
     let started = ContinuousClock.now
     let report = await providers[subscription.harness]!.fetch(subscription, context: context)
     print("\n\(subscription.name)  [\(subscription.harness.displayName)]  \(subscription.sourceDescription())  (\(ContinuousClock.now - started))")
+    if subscription.harness == .claude {
+        let changed = claude.credentialModificationDate(for: subscription, environment: environment)
+        print("  credential last changed: \(changed.map { "\(Int(now.timeIntervalSince($0) / 60))m ago" } ?? "unknown")")
+    }
     if let snapshot = report.snapshot {
         let current = snapshot.current(at: now)
         print("  plan: \(snapshot.planName ?? "?")  source: \(snapshot.source.rawValue)  fetched: \(Int(now.timeIntervalSince(snapshot.fetchedAt)))s ago  status: \(UsageRules.status(of: current, at: now))")

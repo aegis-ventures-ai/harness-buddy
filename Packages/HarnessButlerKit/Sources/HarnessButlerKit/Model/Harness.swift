@@ -68,6 +68,9 @@ public enum Harness: String, Codable, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// Data older than this shows as stale even without an error (e.g. restored at launch, or polling stalled).
+    public var staleAfter: TimeInterval { max(3 * refreshInterval, 30 * 60) }
+
     /// When the popover opens, data older than this is refreshed (U-12).
     public var popoverStaleness: TimeInterval {
         switch self {

@@ -10,6 +10,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private var clock: Timer?
+    let menuBarState = MenuBarState()
 
     init(store: UsageStore, openSettings: @escaping () -> Void) {
         self.store = store
@@ -33,6 +34,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         statusItem.autosaveName = "HarnessButlerStatusItem"
 
         observeStore()
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateVisibility() }
+        }
         // Countdowns and pace move with time even when data doesn't.
         clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.render() }
@@ -61,8 +65,22 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.image = nil
             button.attributedTitle = title
         }
+        menuBarState.width = button.intrinsicContentSize.width
+        updateVisibility()
         button.toolTip = MenuBarTitle.tooltip(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now)
         button.setAccessibilityLabel(button.toolTip ?? "Harness Butler")
+    }
+
+    /// Hidden when the item's window is gone, off every screen, or fully occluded while the menubar shows.
+    private func updateVisibility() {
+        guard let window = statusItem.button?.window else {
+            menuBarState.isLikelyHidden = true
+            return
+        }
+        let onScreen = NSScreen.screens.contains { $0.frame.intersects(window.frame) }
+        let menuBarShowing = NSMenu.menuBarVisible()
+        menuBarState.isLikelyHidden = !window.isVisible || !onScreen
+            || (menuBarShowing && !window.occlusionState.contains(.visible))
     }
 
     #if DEBUG
@@ -125,7 +143,7 @@ enum MenuBarTitle {
             let snapshot = usage.snapshot?.current(at: now)
             let window = snapshot.flatMap { UsageRules.headlineWindow(of: $0, at: now) }
             let status = window.map { UsageRules.status(of: $0, at: now) } ?? .onTrack
-            let stale = usage.issue != nil
+            let stale = SubscriptionGroup.classify(usage, harness: subscription.harness, at: now) == .stale
 
             let color: NSColor = switch status {
             case .limited: NSColor(hex: 0xEC6F6F)

@@ -21,6 +21,18 @@ make probe    # print one usage read per subscription, no UI (add --live via: cd
 
 The Xcode project is generated from `project.yml` and isn't committed. Run `make project` after pulling.
 
+`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback.
+
+Debug-build launch flags (pass after `open … --args`): `--open-popover` opens the popover on launch; `--open-settings [subscriptions|menubar|about]` opens Settings on that tab.
+
+## Data the app keeps
+
+Everything lives in `~/Library/Application Support/HarnessButler/` (mode 0700):
+- `subscriptions.json`: names, harness, home-directory override, pinned flag and order.
+- `usage-cache.json`: last good usage per subscription (percentages, reset times, plan names), so the popover isn't empty after a relaunch.
+
+No tokens are ever written to disk.
+
 ## Layout
 
 | Path | What |

@@ -22,6 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .seconds(3))
                 statusItem?.openPopoverForDebugging()
             }
+            // --open-settings [subscriptions|menubar|about]
+            if let index = CommandLine.arguments.firstIndex(of: "--open-settings") {
+                let name = CommandLine.arguments.dropFirst(index + 1).first ?? ""
+                showSettings(tab: SettingsTab(rawValue: name) ?? .subscriptions)
+            }
             #endif
         }
     }
@@ -31,9 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ChildProcessRegistry.shared.terminateAll()
     }
 
-    func showSettings() {
+    func showSettings(tab: SettingsTab = .subscriptions) {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store)))
+            let view = SettingsView(store: store, menuBar: statusItem?.menuBarState ?? MenuBarState(), tab: tab)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "Harness Butler Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 640, height: 460))

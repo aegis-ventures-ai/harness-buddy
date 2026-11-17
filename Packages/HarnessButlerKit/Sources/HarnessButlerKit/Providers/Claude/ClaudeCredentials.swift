@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
+import Security
+import Synchronization
 
 /// The minimum taken from Claude Code's credential blob. Everything else (refresh token,
 /// third-party MCP tokens) is dropped as soon as it is parsed and never stored.
@@ -80,5 +83,60 @@ extension Subscription {
     /// path (trailing `/`, unexpanded `~`) is easy to spot.
     public var claudeKeychainService: String? {
         harness == .claude ? ClaudeKeychain.serviceName(configDirOverride: homeOverride) : nil
+    }
+}
+
+/// Where the Claude provider gets credentials. Injectable for tests.
+protocol ClaudeCredentialSource: Sendable {
+    /// When the credential last changed, read without touching its secret (and without prompting).
+    /// `nil` when unknown.
+    func modificationDate(configDirOverride: String?, configDir: URL, environment: [String: String]) -> Date?
+    func read(configDirOverride: String?, configDir: URL, environment: [String: String]) async throws(ClaudeCredentialError) -> ClaudeCredentials
+}
+
+struct SystemClaudeCredentialSource: ClaudeCredentialSource {
+    func modificationDate(configDirOverride: String?, configDir: URL, environment: [String: String]) -> Date? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: ClaudeKeychain.serviceName(configDirOverride: configDirOverride),
+            kSecAttrAccount as String: ClaudeKeychain.account(environment: environment),
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context,
+        ]
+        var result: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+           let attributes = result as? [String: Any],
+           let date = attributes[kSecAttrModificationDate as String] as? Date {
+            return date
+        }
+        let file = configDir.appending(path: ".credentials.json")
+        return (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
+    func read(configDirOverride: String?, configDir: URL, environment: [String: String]) async throws(ClaudeCredentialError) -> ClaudeCredentials {
+        try await ClaudeKeychain.read(configDirOverride: configDirOverride, configDir: configDir, environment: environment)
+    }
+}
+
+/// Remembers credentials the API rejected (or that had expired), keyed by Keychain service,
+/// so the provider doesn't retry until Claude Code has rewritten them (spike 01, step 5).
+final class ClaudeRejectedCredentials: Sendable {
+    private let rejected = Mutex<[String: Date]>([:])
+
+    /// True when `service` was rejected at exactly this credential version.
+    func isRejected(_ service: String, credentialDate: Date?) -> Bool {
+        guard let credentialDate else { return false } // unknown version: don't block
+        return rejected.withLock { $0[service] == credentialDate }
+    }
+
+    func reject(_ service: String, credentialDate: Date?) {
+        rejected.withLock { $0[service] = credentialDate }
+    }
+
+    func clear(_ service: String) {
+        _ = rejected.withLock { $0.removeValue(forKey: service) }
     }
 }

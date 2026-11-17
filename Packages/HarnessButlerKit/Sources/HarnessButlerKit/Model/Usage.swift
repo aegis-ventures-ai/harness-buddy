@@ -118,6 +118,13 @@ public enum UsageIssue: Error, Hashable, Sendable {
         }
     }
 
+    /// Whether the scheduler should back off (5 → 10 → 30 min) after this issue.
+    /// An expired token doesn't: the provider gates on the credential changing, which is cheap to check.
+    public var shouldBackOff: Bool {
+        if case .tokenExpired = self { return false }
+        return true
+    }
+
     /// A provider-requested retry delay, if any.
     public var retryAfter: TimeInterval? {
         if case .rateLimited(let retryAfter) = self { return retryAfter }

@@ -6,13 +6,23 @@ import Foundation
 /// Codex refreshes its own token under its own lock; the app never touches `auth.json`.
 /// See docs/spikes/02-codex-usage.md.
 ///
-/// TODO(M1): passive fallback from `$CODEX_HOME/sessions/**/rollout-*.jsonl` when offline.
+/// When the live read fails, the newest rate-limit event from Codex's own session logs is returned
+/// alongside the issue (see `CodexRolloutReader`); the store keeps whichever snapshot is newer.
 public struct CodexAppServerUsageProvider: UsageProvider {
     public let harness = Harness.codex
 
     public init() {}
 
     public func fetch(_ subscription: Subscription, context: UsageFetchContext) async -> UsageReport {
+        var report = await fetchLive(subscription, context: context)
+        if report.issue != nil, report.snapshot == nil {
+            let home = subscription.homeURL(homeDirectory: context.environment.homeDirectory)
+            report.snapshot = CodexRolloutReader.latestSnapshot(codexHome: home)
+        }
+        return report
+    }
+
+    func fetchLive(_ subscription: Subscription, context: UsageFetchContext) async -> UsageReport {
         guard let codex = context.environment.locate("codex") else { return .failure(.harnessMissing(.codex)) }
 
         var extra: [String: String] = [:]

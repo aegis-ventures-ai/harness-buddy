@@ -9,10 +9,17 @@ import Foundation
 public struct ClaudeUsageProvider: UsageProvider {
     public let harness = Harness.claude
     let session: URLSession
+    let credentialSource: any ClaudeCredentialSource
+    let rejected = ClaudeRejectedCredentials()
     static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
     public init(session: URLSession = .shared) {
+        self.init(session: session, credentialSource: SystemClaudeCredentialSource())
+    }
+
+    init(session: URLSession, credentialSource: any ClaudeCredentialSource) {
         self.session = session
+        self.credentialSource = credentialSource
     }
 
     public func fetch(_ subscription: Subscription, context: UsageFetchContext) async -> UsageReport {
@@ -24,12 +31,22 @@ public struct ClaudeUsageProvider: UsageProvider {
             return UsageReport(snapshot: cached)
         }
 
+        // A token the API already rejected stays rejected until Claude Code rewrites it.
+        let service = ClaudeKeychain.serviceName(configDirOverride: subscription.homeOverride)
+        let environment = context.environment.baseEnvironment
+        let credentialDate = credentialSource.modificationDate(
+            configDirOverride: subscription.homeOverride, configDir: configDir, environment: environment
+        )
+        if rejected.isRejected(service, credentialDate: credentialDate) {
+            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
+        }
+
         let credentials: ClaudeCredentials
         do {
-            credentials = try await ClaudeKeychain.read(
+            credentials = try await credentialSource.read(
                 configDirOverride: subscription.homeOverride,
                 configDir: configDir,
-                environment: context.environment.baseEnvironment
+                environment: environment
             )
         } catch {
             let issue: UsageIssue = switch error {
@@ -41,6 +58,7 @@ public struct ClaudeUsageProvider: UsageProvider {
         }
 
         if let expiresAt = credentials.expiresAt, expiresAt <= context.now.addingTimeInterval(60) {
+            rejected.reject(service, credentialDate: credentialDate)
             return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
         }
 
@@ -68,6 +86,7 @@ public struct ClaudeUsageProvider: UsageProvider {
             guard let usage = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return UsageReport(snapshot: cache.snapshot, issue: .unsupported("Unexpected usage response from Anthropic"))
             }
+            rejected.clear(service)
             return UsageReport(snapshot: UsageSnapshot(
                 windows: ClaudeUsageParser.windows(from: usage),
                 planName: plan ?? cache.snapshot?.planName,
@@ -76,6 +95,7 @@ public struct ClaudeUsageProvider: UsageProvider {
                 source: .live
             ))
         case 401:
+            rejected.reject(service, credentialDate: credentialDate)
             return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
         case 403, 429:
             let retryAfter = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "retry-after").flatMap(TimeInterval.init)
@@ -131,5 +151,16 @@ struct ClaudeGlobalConfig {
             )
         }
         return config
+    }
+}
+
+extension ClaudeUsageProvider {
+    /// When this subscription's Claude credential last changed (attributes only, never prompts).
+    public func credentialModificationDate(for subscription: Subscription, environment: HarnessEnvironment) -> Date? {
+        credentialSource.modificationDate(
+            configDirOverride: subscription.homeOverride,
+            configDir: subscription.homeURL(homeDirectory: environment.homeDirectory),
+            environment: environment.baseEnvironment
+        )
     }
 }

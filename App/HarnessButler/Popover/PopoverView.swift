@@ -115,7 +115,7 @@ struct SubscriptionRow: View {
         let window = snapshot.flatMap { UsageRules.headlineWindow(of: $0, at: now) }
         let status = window.map { UsageRules.status(of: $0, at: now) } ?? .onTrack
         let pace = window.flatMap { UsageRules.pace(of: $0, at: now) }
-        let stale = usage.issue != nil
+        let stale = store.isStale(subscription, at: now)
 
         HStack(alignment: .top, spacing: 10) {
             HarnessAvatar(harness: subscription.harness)

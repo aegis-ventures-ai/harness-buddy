@@ -1,17 +1,26 @@
 import HarnessButlerKit
 import SwiftUI
 
+enum SettingsTab: String, Hashable {
+    case subscriptions, menubar, about
+}
+
 /// M1 settings: manage subscriptions (U-2) and menubar pinning/order (M-1).
 /// Harness config pages (C-1…) arrive in M3.
 struct SettingsView: View {
     let store: UsageStore
+    let menuBar: MenuBarState
+    @State var tab: SettingsTab = .subscriptions
 
     var body: some View {
-        TabView {
-            Tab("Subscriptions", systemImage: "person.2") {
+        TabView(selection: $tab) {
+            Tab("Subscriptions", systemImage: "person.2", value: .subscriptions) {
                 SubscriptionsSettings(store: store)
             }
-            Tab("About", systemImage: "info.circle") {
+            Tab("Menubar", systemImage: "menubar.rectangle", value: .menubar) {
+                MenuBarSettings(store: store, menuBar: menuBar)
+            }
+            Tab("About", systemImage: "info.circle", value: .about) {
                 AboutSettings()
             }
         }
@@ -89,20 +98,31 @@ private struct SubscriptionSettingsRow: View {
                 Text("\(subscription.harness.displayName) · \(subscription.sourceDescription())")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 if let service = subscription.claudeKeychainService {
-                    Text("Keychain: \(service)").font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                    Text("Keychain: \(service)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
                 }
             }
             Spacer()
             if !isRenaming {
-                Button("Rename") { startRename() }.buttonStyle(.borderless)
+                Button("Rename") { startRename() }.buttonStyle(.borderless).fixedSize()
             }
-            Toggle("Menubar", isOn: Binding(
-                get: { subscription.isPinned },
-                set: { store.setPinned(subscription.id, $0) }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
+            HStack(spacing: 6) {
+                Text("Menubar").font(.caption).foregroundStyle(.secondary)
+                Toggle("Show in menubar", isOn: Binding(
+                    get: { subscription.isPinned },
+                    set: { store.setPinned(subscription.id, $0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+            }
+            .fixedSize()
         }
         .padding(.vertical, 4)
     }
@@ -174,5 +194,73 @@ private struct AboutSettings: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// M-1: pinned order, a live preview, the item's width and a warning when it risks being hidden.
+private struct MenuBarSettings: View {
+    let store: UsageStore
+    let menuBar: MenuBarState
+
+    var body: some View {
+        Form {
+            Section("Preview") {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    MenuBarPreview(title: MenuBarTitle.attributedString(
+                        for: store.pinned.map { ($0, store.usage(for: $0.id)) }, now: context.date
+                    ))
+                }
+                LabeledContent("Width", value: "\(Int(menuBar.width.rounded())) pt")
+                if menuBar.isLikelyHidden {
+                    Label("macOS appears to be hiding the menubar item because it doesn't fit. Unpin some subscriptions or remove other menubar items.",
+                          systemImage: "eye.slash")
+                        .foregroundStyle(.red)
+                } else if menuBar.isWide {
+                    Label("The item is wide. On smaller or notched displays macOS may hide it. Consider unpinning some subscriptions.",
+                          systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(Theme.warn)
+                }
+            }
+            Section {
+                if store.pinned.isEmpty {
+                    Text("Nothing pinned. Pin subscriptions in the popover or on the Subscriptions tab.")
+                        .foregroundStyle(.secondary)
+                }
+                List {
+                    ForEach(store.pinned) { subscription in
+                        HStack {
+                            Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
+                            HarnessAvatar(harness: subscription.harness, size: 18)
+                            Text(subscription.name)
+                            Spacer()
+                            Button("Unpin") { store.setPinned(subscription.id, false) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                    .onMove { store.movePinned(fromOffsets: $0, toOffset: $1) }
+                }
+                .frame(minHeight: 120)
+            } header: {
+                Text("Pinned, in menubar order")
+            } footer: {
+                Text("Drag to reorder. Every pinned subscription is shown; none are truncated.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Renders the menubar title (with logo attachments) the way the status item does.
+private struct MenuBarPreview: NSViewRepresentable {
+    var title: NSAttributedString
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(labelWithAttributedString: title)
+        field.setContentHuggingPriority(.required, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        field.attributedStringValue = title.length == 0 ? NSAttributedString(string: "(icon only)") : title
     }
 }

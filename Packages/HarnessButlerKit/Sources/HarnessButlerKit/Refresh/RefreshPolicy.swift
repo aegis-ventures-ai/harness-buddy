@@ -93,7 +93,7 @@ public enum RefreshPolicy {
             state.blockedUntil = nil
             return
         }
-        state.consecutiveFailures += 1
+        if issue.shouldBackOff { state.consecutiveFailures += 1 }
         if let retryAfter = issue.retryAfter {
             state.blockedUntil = now.addingTimeInterval(retryAfter)
         }

@@ -76,3 +76,21 @@ import Testing
             == "~/.claude-work (CLAUDE_CONFIG_DIR)")
     }
 }
+
+@Suite struct SubscriptionOrderingTests {
+    @Test func movesLikeSwiftUIOnMove() {
+        #expect(SubscriptionOrdering.moving([1, 2, 3, 4], fromOffsets: [0], toOffset: 3) == [2, 3, 1, 4])
+        #expect(SubscriptionOrdering.moving([1, 2, 3, 4], fromOffsets: [3], toOffset: 0) == [4, 1, 2, 3])
+        #expect(SubscriptionOrdering.moving([1, 2, 3, 4], fromOffsets: [0, 2], toOffset: 4) == [2, 4, 1, 3])
+    }
+
+    @Test func pinnedMoveLeavesUnpinnedInPlace() {
+        let a = Subscription(name: "a", harness: .claude)
+        let b = Subscription(name: "b", harness: .codex, isPinned: false)
+        let c = Subscription(name: "c", harness: .grok)
+        let d = Subscription(name: "d", harness: .codex)
+        // Pinned order a, c, d; move d to the front.
+        let result = SubscriptionOrdering.movingPinned([a, b, c, d], fromOffsets: [2], toOffset: 0)
+        #expect(result.map(\.name) == ["d", "b", "a", "c"])
+    }
+}
