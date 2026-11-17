@@ -190,6 +190,38 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(report.snapshot?.spend?.dataThrough == nil)
     }
 
+    @Test func malformedOrIncompletePagesFailWhole() async {
+        func report(_ bodies: [String]) async -> UsageReport {
+            let transport = FakeTransport { _, index in .init(status: 200, body: bodies[min(index, bodies.count - 1)]) }
+            return await provider(transport).fetch(subscription, context: context(now))
+        }
+        let bad = UsageIssue.unsupported("Unexpected cost response from Anthropic")
+        // A row with a cost that doesn't parse would understate spend.
+        let badRow = #"{"data":[{"starting_at":"2026-11-01T10:00:00Z","cost":{"amount":"lots"}}],"has_more":false}"#
+        #expect(await report([badRow]).issue == bad)
+        #expect(await report([badRow]).snapshot == nil)
+        #expect(await report([#"{"data":[{"cost":{"amount":"1"}}],"has_more":false}"#]).issue == bad)
+        // More pages promised but no cursor.
+        #expect(await report([#"{"data":[],"has_more":true,"next_page":null}"#]).issue == bad)
+        // An hour without a cost is zero, not an error.
+        let noCost = #"{"data":[{"starting_at":"2026-11-01T10:00:00Z","cost":null}],"has_more":false}"#
+        #expect(await report([noCost]).snapshot?.spend?.monthToDate == 0)
+        // Endless pages stop at the cap with an error, not a partial total.
+        let endless = #"{"data":[{"starting_at":"2026-11-01T10:00:00Z","cost":{"amount":"100"}}],"has_more":true,"next_page":"again"}"#
+        let capped = await report([endless])
+        #expect(capped.issue == .unsupported("Anthropic returned more cost pages than expected"))
+        #expect(capped.snapshot == nil)
+    }
+
+    @Test func retryAfterAcceptsAnHTTPDate() {
+        let now = date("2026-11-16T12:00:00Z")
+        #expect(RetryAfter.parse("Mon, 16 Nov 2026 12:02:00 GMT", now: now) == 120)
+        #expect(RetryAfter.parse("90", now: now) == 90)
+        #expect(RetryAfter.parse("Mon, 16 Nov 2026 11:00:00 GMT", now: now) == 0)
+        #expect(RetryAfter.parse("soon", now: now) == nil)
+        #expect(RetryAfter.parse(nil, now: now) == nil)
+    }
+
     @Test func expiredCursorRestartsOnce() async {
         let transport = FakeTransport { request, index in
             if index == 1 { return .init(status: 410, body: "{}") }
@@ -210,7 +242,8 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(await issue(429, headers: ["retry-after": "90"]) == .rateLimited(retryAfter: 90))
         #expect(await issue(500) == .unavailable("Anthropic returned HTTP 500"))
         #expect(await issue(-1) == .unavailable("Can't reach Anthropic"))
-        #expect(await issue(200) == nil)   // a 200 without rows is an empty month
+        // A 200 without a `data` array isn't an empty month: keep the last good total.
+        #expect(await issue(200) == .unsupported("Unexpected cost response from Anthropic"))
     }
 
     @Test func missingKeyIsSignedOutWithoutARequest() async {
@@ -266,6 +299,20 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(params["end_time"] == String(Int(now.timeIntervalSince1970)))
         #expect(params["bucket_width"] == "1d")
         #expect(query(transport.requests[1])["page"] == "page_2")
+    }
+
+    @Test func malformedBucketsFailWhole() async {
+        func issue(_ body: String) async -> UsageIssue? {
+            let transport = FakeTransport { _, _ in .init(status: 200, body: body) }
+            let secrets = InMemorySecretStore([subscription.id.uuidString: "sk-admin-secret"])
+            return await OpenAIAdminUsageProvider(secrets: secrets, transport: transport).fetch(subscription, context: context(now)).issue
+        }
+        let bad = UsageIssue.unsupported("Unexpected costs response from OpenAI")
+        #expect(await issue("{}") == bad)
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":[{"amount":{"value":"n/a"}}]}],"has_more":false}"#) == bad)
+        #expect(await issue(#"{"data":[{"results":[]}],"has_more":false}"#) == bad)
+        #expect(await issue(#"{"data":[],"has_more":true}"#) == bad)
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":null}],"has_more":false}"#) == nil)
     }
 }
 

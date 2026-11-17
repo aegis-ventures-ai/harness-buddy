@@ -86,7 +86,9 @@ extension InstallMethod {
     ///   - locate: finds a helper (`brew`, `npm`, …) on the search path.
     public func updateCommand(binary: URL, locate: (String) -> URL?) -> HarnessCommand? {
         // Non-interactive: there's no terminal to answer prompts.
-        let quiet = ["NONINTERACTIVE": "1", "HOMEBREW_NO_ENV_HINTS": "1", "CODEX_NON_INTERACTIVE": "1"]
+        // Grok's own updater would otherwise send telemetry (as `--version` and usage reads would).
+        let quiet = ["NONINTERACTIVE": "1", "HOMEBREW_NO_ENV_HINTS": "1", "CODEX_NON_INTERACTIVE": "1",
+                     "GROK_TELEMETRY_ENABLED": "0", "GROK_TELEMETRY_MIXPANEL_ENABLED": "false"]
         switch self {
         case .claudeNative, .grokInstaller, .codexStandalone:
             return HarnessCommand(executable: binary, arguments: ["update"], environment: quiet)

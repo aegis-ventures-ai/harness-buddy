@@ -14,12 +14,14 @@ extension URLSession: HTTPTransport {
 }
 
 extension URLSession {
-    /// No disk cache, no cookies: spend responses stay in memory and only the app's own cache file keeps totals.
-    public static let adminAPI: URLSession = {
+    /// No disk cache, no cookies, no credential storage: tokens, keys and responses stay in memory.
+    /// Used for every provider call (usage and spend).
+    public static let providerAPI: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
         return URLSession(configuration: configuration)
     }()
 }
@@ -69,7 +71,7 @@ extension AdminSpendProvider {
         case 403:
             return .unavailable("This key can't read \(provider) organization costs. Use an Admin key")
         case 429:
-            return .rateLimited(retryAfter: response.value(forHTTPHeaderField: "retry-after").flatMap(TimeInterval.init))
+            return .rateLimited(retryAfter: RetryAfter.parse(response.value(forHTTPHeaderField: "retry-after")))
         default:
             return .unavailable("\(provider) returned HTTP \(status)")
         }
@@ -83,7 +85,17 @@ extension AdminSpendProvider {
         if let string = value as? String { return Double(string) }
         return LenientJSON.double(value)
     }
+
+    /// The cursor for the next page. `has_more` without a cursor is malformed: stopping there would undercount.
+    static func nextPage(_ root: [String: Any]) throws(MalformedSpend) -> String? {
+        guard root["has_more"] as? Bool == true else { return nil }
+        guard let next = LenientJSON.string(root["next_page"]), !next.isEmpty else { throw MalformedSpend() }
+        return next
+    }
 }
+
+/// A cost page without the expected shape.
+struct MalformedSpend: Error {}
 
 /// Never follow more pages than this; a month of hourly rows fits in one.
 private let maxPages = 20
@@ -105,7 +117,7 @@ public struct AnthropicAdminUsageProvider: AdminSpendProvider {
     static let apiVersion = "2026-10-21"
     static let beta = "analytics-usage-cost-2026-08-24"
 
-    public init(secrets: any SecretStore = KeychainSecretStore(), transport: any HTTPTransport = URLSession.adminAPI) {
+    public init(secrets: any SecretStore = KeychainSecretStore(), transport: any HTTPTransport = URLSession.providerAPI) {
         self.secrets = secrets
         self.transport = transport
     }
@@ -134,18 +146,20 @@ public struct AnthropicAdminUsageProvider: AdminSpendProvider {
         return request
     }
 
-    /// Adds one page's rows into `page`; returns the next-page cursor, if any.
-    static func parse(_ root: [String: Any], into page: inout SpendPage) -> String? {
+    /// Adds one page's rows into `page`; returns the next-page cursor, if any. A page that doesn't
+    /// have the expected shape fails as a whole: a partial sum would understate spend.
+    static func parse(_ root: [String: Any], into page: inout SpendPage) throws(MalformedSpend) -> String? {
         if let refreshed = ISO8601.date(LenientJSON.string(root["data_refreshed_at"])) { page.dataThrough = refreshed }
-        for row in LenientJSON.array(root["data"]) ?? [] {
-            guard let start = ISO8601.date(LenientJSON.string(row["starting_at"])),
-                  let cost = LenientJSON.object(row["cost"]),
-                  let cents = number(cost["amount"]) else { continue }
+        guard let rows = root["data"] as? [Any] else { throw MalformedSpend() }
+        for row in rows {
+            guard let row = row as? [String: Any], let start = ISO8601.date(LenientJSON.string(row["starting_at"])) else { throw MalformedSpend() }
+            // An hour without spend may come without a cost; one that has a cost must parse.
+            guard let costValue = row["cost"], !(costValue is NSNull) else { continue }
+            guard let cost = costValue as? [String: Any], let cents = number(cost["amount"]) else { throw MalformedSpend() }
             if let currency = LenientJSON.string(cost["currency"]) { page.currency = currency.uppercased() }
             page.days[BillingMonth.utcDay(containing: start), default: 0] += cents / 100
         }
-        guard root["has_more"] as? Bool == true, let next = LenientJSON.string(root["next_page"]), !next.isEmpty else { return nil }
-        return next
+        return try nextPage(root)
     }
 
     func readMonth(_ month: BillingMonth, key: String, context: UsageFetchContext) async -> Result<SpendPage, UsageIssue> {
@@ -173,14 +187,16 @@ public struct AnthropicAdminUsageProvider: AdminSpendProvider {
             guard response.statusCode == 200 else {
                 return .failure(Self.issue(status: response.statusCode, response: response, provider: "Anthropic"))
             }
-            guard let root = Self.jsonObject(data) else {
+            do {
+                guard let root = Self.jsonObject(data) else { throw MalformedSpend() }
+                cursor = try Self.parse(root, into: &result)
+            } catch {
                 return .failure(.unsupported("Unexpected cost response from Anthropic"))
             }
-            cursor = Self.parse(root, into: &result)
             pages += 1
-            if cursor == nil || pages >= maxPages { break }
+            if cursor == nil { return .success(result) }
+            if pages >= maxPages { return .failure(.unsupported("Anthropic returned more cost pages than expected")) }
         }
-        return .success(result)
     }
 }
 
@@ -199,7 +215,7 @@ public struct OpenAIAdminUsageProvider: AdminSpendProvider {
     let transport: any HTTPTransport
     static let costsURL = URL(string: "https://api.openai.com/v1/organization/costs")!
 
-    public init(secrets: any SecretStore = KeychainSecretStore(), transport: any HTTPTransport = URLSession.adminAPI) {
+    public init(secrets: any SecretStore = KeychainSecretStore(), transport: any HTTPTransport = URLSession.providerAPI) {
         self.secrets = secrets
         self.transport = transport
     }
@@ -222,18 +238,22 @@ public struct OpenAIAdminUsageProvider: AdminSpendProvider {
         return request
     }
 
-    static func parse(_ root: [String: Any], into page: inout SpendPage) -> String? {
-        for bucket in LenientJSON.array(root["data"]) ?? [] {
-            guard let start = number(bucket["start_time"]) else { continue }
+    /// Adds one page's buckets into `page`; returns the next-page cursor, if any. Malformed pages fail whole.
+    static func parse(_ root: [String: Any], into page: inout SpendPage) throws(MalformedSpend) -> String? {
+        guard let buckets = root["data"] as? [Any] else { throw MalformedSpend() }
+        for bucket in buckets {
+            guard let bucket = bucket as? [String: Any], let start = number(bucket["start_time"]) else { throw MalformedSpend() }
             let day = BillingMonth.utcDay(containing: Date(timeIntervalSince1970: start))
-            for result in LenientJSON.array(bucket["results"]) ?? [] {
-                guard let amount = LenientJSON.object(result["amount"]), let value = number(amount["value"]) else { continue }
+            let results = bucket["results"].flatMap { $0 is NSNull ? nil : $0 }
+            guard let results = (results ?? [Any]()) as? [Any] else { throw MalformedSpend() }
+            for result in results {
+                guard let result = result as? [String: Any], let amount = LenientJSON.object(result["amount"]),
+                      let value = number(amount["value"]) else { throw MalformedSpend() }
                 if let currency = LenientJSON.string(amount["currency"]) { page.currency = currency.uppercased() }
                 page.days[day, default: 0] += value
             }
         }
-        guard root["has_more"] as? Bool == true, let next = LenientJSON.string(root["next_page"]), !next.isEmpty else { return nil }
-        return next
+        return try nextPage(root)
     }
 
     func readMonth(_ month: BillingMonth, key: String, context: UsageFetchContext) async -> Result<SpendPage, UsageIssue> {
@@ -253,12 +273,15 @@ public struct OpenAIAdminUsageProvider: AdminSpendProvider {
             guard response.statusCode == 200 else {
                 return .failure(Self.issue(status: response.statusCode, response: response, provider: "OpenAI"))
             }
-            guard let root = Self.jsonObject(data) else {
+            do {
+                guard let root = Self.jsonObject(data) else { throw MalformedSpend() }
+                cursor = try Self.parse(root, into: &result)
+            } catch {
                 return .failure(.unsupported("Unexpected costs response from OpenAI"))
             }
-            cursor = Self.parse(root, into: &result)
             pages += 1
-        } while cursor != nil && pages < maxPages
+            if cursor != nil, pages >= maxPages { return .failure(.unsupported("OpenAI returned more cost pages than expected")) }
+        } while cursor != nil
         return .success(result)
     }
 }

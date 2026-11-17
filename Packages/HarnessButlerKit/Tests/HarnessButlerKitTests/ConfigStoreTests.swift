@@ -255,6 +255,71 @@ private func mode(_ path: String) throws -> Int {
         #expect(!FileManager.default.fileExists(atPath: ref.lockPath!))
     }
 
+    @Test func claudeGlobalKeepsOnlyMCPServersInMemoryAndBackups() async throws {
+        let dir = try tempDir()
+        let file = dir.appending(path: ".claude.json")
+        let sentinel = "identity-sentinel-7f3a"
+        try write("{\n  \"oauthAccount\": {\"emailAddress\": \"\(sentinel)\"},\n  \"projects\": {\"/\(sentinel)\": {}},\n  \"mcpServers\": {\"a\": {\"command\": \"x\"}}\n}", to: file)
+        let backupRoot = dir.appending(path: "Backups")
+        let store = ConfigStore(backups: ConfigBackupStore(root: backupRoot))
+        let ref = ConfigFileRef(kind: .claudeGlobal, url: file)
+        store.load(ref)
+        let state = try #require(store.state(ref))
+        #expect(!state.original.text.contains(sentinel))
+        let loadedText = String(decoding: state.loaded?.bytes ?? [], as: UTF8.self)
+        #expect(!loadedText.contains(sentinel))
+        #expect(MCPServerMapping.forHarness(.claude).servers(in: state.original).map(\.name) == ["a"])
+
+        try store.stage([.set(["mcpServers", "b"], .table(["command": .string("y")]))], in: ref)
+        #expect(await store.save(ref))
+        #expect(try text(file).contains(sentinel))   // the file itself keeps everything
+        #expect(!(store.state(ref)?.original.text.contains(sentinel) ?? true))
+        let backup = try #require(store.backupList(ref).first)
+        let backupText = String(decoding: try store.backups.read(backup), as: UTF8.self)
+        #expect(!backupText.contains(sentinel))
+        #expect(backupText.contains("\"a\""))
+
+        // Restoring that backup brings back only the old servers; the rest of the file stays.
+        #expect(await store.restore(backup, to: ref))
+        let restored = try ConfigDocument(format: .json, bytes: Array(text(file).utf8))
+        #expect(MCPServerMapping.forHarness(.claude).servers(in: restored).map(\.name) == ["a"])
+        #expect(try text(file).contains(sentinel))
+    }
+
+    @Test func oldFullBackupsOfClaudeGlobalAreScrubbed() throws {
+        let dir = try tempDir()
+        let store = ConfigBackupStore(root: dir.appending(path: "Backups"))
+        let ref = ConfigFileRef(kind: .claudeGlobal, url: dir.appending(path: ".claude.json"))
+        try store.prepare(for: ref)
+        let old = store.directory(for: ref).appending(path: ".claude.json.20261101-000000.000.abcd1234.bak")
+        try write("{\"oauthAccount\": {\"emailAddress\": \"someone\"}, \"mcpServers\": {\"a\": {}}}", to: old)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: old.path(percentEncoded: false))
+        let settings = ConfigFileRef(kind: .claudeSettings, url: dir.appending(path: "settings.json"))
+        try store.prepare(for: settings)
+        let other = store.directory(for: settings).appending(path: "settings.json.20261101-000000.000.abcd1234.bak")
+        try write("{\"env\": {\"emailAddress\": \"kept\"}}", to: other)
+
+        #expect(store.scrubScopedBackups() == 1)
+        #expect(!(try text(old)).contains("someone"))
+        #expect(try text(old).contains("mcpServers"))
+        #expect(try mode(old.path(percentEncoded: false)) == 0o600)
+        #expect(try text(other).contains("kept"))   // unscoped files are backed up whole
+        #expect(store.scrubScopedBackups() == 0)
+    }
+
+    @Test func creatingAFileRefusesOneThatAppeared() throws {
+        let dir = try tempDir()
+        let file = dir.appending(path: "config.toml")
+        let ref = ConfigFileRef(kind: .grokConfig, url: file)
+        try write("model = \"theirs\"\n", to: file)
+        #expect(throws: SafeWriteError.externalChange(current: nil)) {
+            try ConfigStore.create(ref, bytes: Array("model = \"ours\"\n".utf8), validate: { _ in })
+        }
+        #expect(try text(file) == "model = \"theirs\"\n")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: dir.path(percentEncoded: false)).filter { $0.contains(".hb-") }
+        #expect(leftovers.isEmpty)
+    }
+
     @Test func claudeGlobalConflictsWhenServersChangedElsewhere() async throws {
         let dir = try tempDir()
         let file = dir.appending(path: ".claude.json")

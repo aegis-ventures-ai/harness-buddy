@@ -33,11 +33,10 @@ public struct UsageWindow: Codable, Hashable, Sendable, Identifiable {
         guard let resetsAt, resetsAt <= now else { return self }
         var copy = self
         copy.usedPercent = 0
-        if let duration {
+        if let duration, duration > 0 {
             // Assume back-to-back windows; good enough until the next live read.
-            var next = resetsAt
-            while next <= now { next = next.addingTimeInterval(duration) }
-            copy.resetsAt = next
+            let periods = (now.timeIntervalSince(resetsAt) / duration).rounded(.down) + 1
+            copy.resetsAt = resetsAt.addingTimeInterval(periods * duration)
         } else {
             copy.resetsAt = nil
         }
@@ -96,7 +95,7 @@ public struct UsageSnapshot: Codable, Hashable, Sendable {
 }
 
 /// Why a refresh did not produce fresh data. Each case maps to a row state in the popover.
-public enum UsageIssue: Error, Hashable, Sendable {
+public enum UsageIssue: Error, Hashable, Sendable, Codable {
     /// The harness binary couldn't be found or launched.
     case harnessMissing(Harness)
     /// No login in this home directory.

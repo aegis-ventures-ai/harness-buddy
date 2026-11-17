@@ -63,8 +63,10 @@ public struct SafeFileWriter: Sendable {
 
     /// Writes `newBytes` over a file previously loaded. `validate` runs before
     /// anything touches the disk (e.g. re-parse as TOML/JSON).
+    /// `backupContent` picks what goes into the backup (default: everything that was loaded).
     @discardableResult
-    public func write(_ newBytes: [UInt8], over loaded: LoadedFile, validate: ([UInt8]) throws -> Void = { _ in }) throws -> WriteResult {
+    public func write(_ newBytes: [UInt8], over loaded: LoadedFile, validate: ([UInt8]) throws -> Void = { _ in },
+                      backupContent: ([UInt8]) throws -> [UInt8] = { $0 }) throws -> WriteResult {
         do { try validate(newBytes) } catch { throw SafeWriteError.invalidContent("\(error)") }
         let target = loaded.snapshot.resolvedPath
 
@@ -74,8 +76,8 @@ public struct SafeFileWriter: Sendable {
             throw SafeWriteError.externalChange(current: current)
         }
 
-        // 3. Backup of exactly what we loaded.
-        let backup = try writeBackup(loaded)
+        // 3. Backup of what we loaded (or the part of it the caller may keep).
+        let backup = try writeBackup(loaded, bytes: backupContent(loaded.bytes))
 
         // 4. Atomic replace in the target's directory.
         let dir = (target as NSString).deletingLastPathComponent
@@ -115,12 +117,13 @@ public struct SafeFileWriter: Sendable {
     /// key-scoped operations, re-applying them to fresh bytes is a correct merge.
     @discardableResult
     public func update(_ path: String, attempts: Int = 3, validate: ([UInt8]) throws -> Void = { _ in },
+                       backupContent: ([UInt8]) throws -> [UInt8] = { $0 },
                        _ transform: ([UInt8]) throws -> [UInt8]) throws -> WriteResult {
         var lastError: Error = SafeWriteError.verifyFailed
         for _ in 0..<attempts {
             let loaded = try load(path)
             let next = try transform(loaded.bytes)
-            do { return try write(next, over: loaded, validate: validate) }
+            do { return try write(next, over: loaded, validate: validate, backupContent: backupContent) }
             catch SafeWriteError.externalChange(let c) { lastError = SafeWriteError.externalChange(current: c) }
         }
         throw lastError
@@ -160,7 +163,7 @@ public struct SafeFileWriter: Sendable {
 
     // MARK: helpers
 
-    private func writeBackup(_ loaded: LoadedFile) throws -> String {
+    private func writeBackup(_ loaded: LoadedFile, bytes: [UInt8]) throws -> String {
         try FileManager.default.createDirectory(at: backupDirectory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         let f = DateFormatter()
@@ -170,7 +173,7 @@ public struct SafeFileWriter: Sendable {
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard fd >= 0 else { throw SafeWriteError.posix("open backup", errno) }
         defer { close(fd) }
-        let ok = loaded.bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count }
+        let ok = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count }
         guard ok, fsync(fd) == 0 else { throw SafeWriteError.posix("write backup", errno) }
         return path
     }

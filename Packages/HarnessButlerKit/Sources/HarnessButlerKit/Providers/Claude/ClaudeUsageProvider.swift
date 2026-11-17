@@ -13,7 +13,7 @@ public struct ClaudeUsageProvider: UsageProvider {
     let rejected = ClaudeRejectedCredentials()
     static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = .providerAPI) {
         self.init(session: session, credentialSource: SystemClaudeCredentialSource())
     }
 
@@ -37,7 +37,7 @@ public struct ClaudeUsageProvider: UsageProvider {
         let credentialDate = credentialSource.modificationDate(
             configDirOverride: subscription.homeOverride, configDir: configDir, environment: environment
         )
-        if rejected.isRejected(service, credentialDate: credentialDate) {
+        if rejected.isRejected(service, version: ClaudeRejectedCredentials.version(date: credentialDate)) {
             return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
         }
 
@@ -56,9 +56,14 @@ public struct ClaudeUsageProvider: UsageProvider {
             }
             return UsageReport(snapshot: cache.snapshot, issue: issue)
         }
+        // Without a modification date, the token itself identifies the credential version.
+        let version = ClaudeRejectedCredentials.version(date: credentialDate) ?? ClaudeRejectedCredentials.version(token: credentials.accessToken)
+        if credentialDate == nil, rejected.isRejected(service, version: version) {
+            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
+        }
 
         if let expiresAt = credentials.expiresAt, expiresAt <= context.now.addingTimeInterval(60) {
-            rejected.reject(service, credentialDate: credentialDate)
+            rejected.reject(service, version: version)
             return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
         }
 
@@ -95,10 +100,10 @@ public struct ClaudeUsageProvider: UsageProvider {
                 source: .live
             ))
         case 401:
-            rejected.reject(service, credentialDate: credentialDate)
+            rejected.reject(service, version: version)
             return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
         case 403, 429:
-            let retryAfter = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "retry-after").flatMap(TimeInterval.init)
+            let retryAfter = RetryAfter.parse((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "retry-after"))
             return UsageReport(snapshot: cache.snapshot, issue: .rateLimited(retryAfter: retryAfter))
         default:
             return UsageReport(snapshot: cache.snapshot, issue: .unavailable("Anthropic returned HTTP \(status)"))

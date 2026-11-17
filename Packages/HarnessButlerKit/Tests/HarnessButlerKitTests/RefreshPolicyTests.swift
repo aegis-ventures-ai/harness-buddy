@@ -133,14 +133,94 @@ import Testing
         #expect(SubscriptionGroup.classify(usage(age: 31 * 60), harness: .claude, at: t0) == .stale)
     }
 
-    @Test func blocksSurviveTheCacheFile() throws {
+    @Test func retriesSurviveTheCacheFileAndOldBlocksStillLoad() throws {
         let url = FileManager.default.temporaryDirectory.appending(path: "hb-blocks-\(UUID().uuidString)/usage-cache.json")
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let cache = UsageCacheFile(url: url)
         let id = UUID()
-        try cache.save([:], blockedUntil: [id: t0])
-        #expect(cache.loadBlocks() == [id: t0])
+        let record = RetryRecord(lastAttempt: t0, failures: 2, blockedUntil: nil, issue: .unavailable("Anthropic returned HTTP 500"))
+        try cache.save([:], retries: [id: record])
+        #expect(cache.loadRetries() == [id: record])
         try cache.save([:])
-        #expect(cache.loadBlocks().isEmpty)
+        #expect(cache.loadRetries().isEmpty)
+        // Earlier builds wrote only rate-limit blocks.
+        try Data(#"{"version":1,"snapshots":[],"blockedUntil":["\#(id.uuidString)","2027-01-15T08:00:00Z"]}"#.utf8).write(to: url)
+        #expect(cache.loadRetries()[id]?.blockedUntil == (try Date("2027-01-15T08:00:00Z", strategy: .iso8601)))
+    }
+}
+
+/// U-12: quitting and reopening the app while a provider is failing doesn't reset the back-off.
+@MainActor
+@Suite struct BackoffAcrossRelaunchTests {
+    let dir = FileManager.default.temporaryDirectory.appending(path: "hb-relaunch-\(UUID().uuidString)")
+
+    func makeStore() -> UsageStore {
+        UsageStore(file: SubscriptionFile(url: dir.appending(path: "subscriptions.json")),
+                   cacheFile: UsageCacheFile(url: dir.appending(path: "cache.json")),
+                   providers: [], secrets: InMemorySecretStore(), appVersion: "test", homeDirectory: dir)
+    }
+
+    func relaunch() -> UsageStore {
+        let store = makeStore()
+        store.loadSubscriptions()
+        store.restoreCache(now: .now)
+        return store
+    }
+
+    func shouldReadOnLaunch(_ store: UsageStore, _ subscription: Subscription, at now: Date) -> Bool {
+        let entry = store.usage(for: subscription.id)
+        return RefreshPolicy.shouldRefresh(cadence: subscription.cadence, state: entry.refresh, snapshot: entry.snapshot,
+                                           trigger: .launch, now: now, onBattery: false)
+    }
+
+    @Test func failuresWithoutDataKeepTheirStep() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = makeStore()
+        store.addAPI(name: "Org", provider: .openai, key: "sk-admin-x", monthlyBudget: nil)
+        let subscription = try #require(store.subscriptions.first)
+        store.apply(.failure(.unavailable("OpenAI returned HTTP 500")), to: subscription.id)
+        store.apply(.failure(.unavailable("OpenAI returned HTTP 500")), to: subscription.id)
+        store.stop()
+
+        let relaunched = relaunch()
+        let entry = relaunched.usage(for: subscription.id)
+        #expect(entry.refresh.consecutiveFailures == 2)
+        #expect(entry.issue == .unavailable("OpenAI returned HTTP 500"))
+        // Second step: 10 minutes (API cadence is 30, so the longer of the two applies).
+        #expect(!shouldReadOnLaunch(relaunched, subscription, at: .now))
+        #expect(shouldReadOnLaunch(relaunched, subscription, at: .now.addingTimeInterval(31 * 60)))
+        #expect(relaunched.nextAttempt(for: subscription.id) != nil)
+    }
+
+    @Test func failuresAfterOldDataKeepTheirStep() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = makeStore()
+        store.addAPI(name: "Org", provider: .openai, key: "sk-admin-x", monthlyBudget: nil)
+        let subscription = try #require(store.subscriptions.first)
+        let month = BillingMonth.containing(.now)
+        let spend = APISpend(monthToDate: 1, daily: [], periodStart: month.start, periodEnd: month.end)
+        let old = UsageSnapshot(windows: [], planName: nil, fetchedAt: .now.addingTimeInterval(-3 * 3600), source: .live, spend: spend)
+        store.apply(UsageReport(snapshot: old), to: subscription.id)
+        store.apply(.failure(.unavailable("Can't reach OpenAI")), to: subscription.id)
+        store.stop()
+
+        let relaunched = relaunch()
+        #expect(relaunched.usage(for: subscription.id).snapshot != nil)
+        #expect(relaunched.usage(for: subscription.id).refresh.consecutiveFailures == 1)
+        #expect(!shouldReadOnLaunch(relaunched, subscription, at: .now))
+    }
+
+    @Test func successClearsTheRecord() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = makeStore()
+        store.addAPI(name: "Org", provider: .openai, key: "sk-admin-x", monthlyBudget: nil)
+        let subscription = try #require(store.subscriptions.first)
+        store.apply(.failure(.unavailable("Can't reach OpenAI")), to: subscription.id)
+        let month = BillingMonth.containing(.now)
+        let spend = APISpend(monthToDate: 1, daily: [], periodStart: month.start, periodEnd: month.end)
+        store.apply(UsageReport(snapshot: UsageSnapshot(windows: [], planName: nil, fetchedAt: .now, source: .live, spend: spend)), to: subscription.id)
+        store.stop()
+        #expect(store.retries.isEmpty)
+        #expect(relaunch().usage(for: subscription.id).issue == nil)
     }
 }

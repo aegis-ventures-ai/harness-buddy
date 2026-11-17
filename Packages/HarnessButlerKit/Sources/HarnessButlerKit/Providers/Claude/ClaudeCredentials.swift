@@ -123,17 +123,28 @@ struct SystemClaudeCredentialSource: ClaudeCredentialSource {
 
 /// Remembers credentials the API rejected (or that had expired), keyed by Keychain service,
 /// so the provider doesn't retry until Claude Code has rewritten them (spike 01, step 5).
+///
+/// A credential version is its modification date when known; otherwise a SHA-256 of the access
+/// token (kept in memory only), so an unknown date can't turn into a 401 every few minutes.
 final class ClaudeRejectedCredentials: Sendable {
-    private let rejected = Mutex<[String: Date]>([:])
+    private let rejected = Mutex<[String: String]>([:])
 
-    /// True when `service` was rejected at exactly this credential version.
-    func isRejected(_ service: String, credentialDate: Date?) -> Bool {
-        guard let credentialDate else { return false } // unknown version: don't block
-        return rejected.withLock { $0[service] == credentialDate }
+    static func version(date: Date?) -> String? {
+        date.map { "date:\($0.timeIntervalSince1970)" }
     }
 
-    func reject(_ service: String, credentialDate: Date?) {
-        rejected.withLock { $0[service] = credentialDate }
+    static func version(token: String) -> String {
+        "token:" + SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// True when `service` was rejected at exactly this credential version.
+    func isRejected(_ service: String, version: String?) -> Bool {
+        guard let version else { return false }
+        return rejected.withLock { $0[service] == version }
+    }
+
+    func reject(_ service: String, version: String) {
+        rejected.withLock { $0[service] = version }
     }
 
     func clear(_ service: String) {

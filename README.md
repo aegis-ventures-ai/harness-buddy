@@ -29,10 +29,10 @@ Debug-build launch flags (pass after `open … --args`): `--open-popover [harnes
 
 Everything lives in `~/Library/Application Support/HarnessButler/` (mode 0700, files 0600):
 - `subscriptions.json`: names, harness, home-directory override, pinned flag and order; for API subscriptions the provider and monthly budget.
-- `usage-cache.json`: last good usage per subscription (percentages, reset times, plan names, and for API subscriptions month-to-date spend per UTC day), so the popover isn't empty after a relaunch.
+- `usage-cache.json`: last good usage per subscription (percentages, reset times, plan names, and for API subscriptions month-to-date spend per UTC day), so the popover isn't empty after a relaunch. For a subscription whose reads are failing it also keeps the back-off (last attempt, failure count, any provider `retry-after`, and the row's status message), so quitting and reopening the app doesn't retry early.
 - `history.sqlite` (U-10): one row per window reading (subscription ID, window ID, time, percent used), unchanged readings thinned to one per 30 minutes, kept 35 days. It feeds the 7-day sparkline in the detail view. No names, plans or account data.
 - `usage-alerts.json`: per window, the last reading, its reset time and the highest alert threshold already sent, so threshold and reset notifications aren't repeated (§4.5).
-- `Backups/<file kind>-<hash>/`: the previous version of a harness config file, written before every save from Settings (mode 0600, kept 30 days). Env blocks can hold tokens, so these stay private to your user.
+- `Backups/<file kind>-<hash>/`: the previous version of a harness config file, written before every save from Settings (mode 0600, kept 30 days). Env blocks can hold tokens, so these stay private to your user. Backups of `.claude.json` hold only `mcpServers`, never the identity and project data in the rest of that file (older full backups are cut down on launch).
 
 Harness config files are only written when you click Save in the diff review. For `~/.claude.json` only the `mcpServers` key is read or written, under Claude Code's own `.claude.json.lock`.
 

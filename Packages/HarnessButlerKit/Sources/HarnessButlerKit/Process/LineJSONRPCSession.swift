@@ -53,6 +53,8 @@ public final class LineJSONRPCSession: Sendable {
         process.standardError = FileHandle.nullDevice
         self.process = process
         self.stdin = inPipe.fileHandleForWriting
+        // A child that exits early must make writes fail with EPIPE, not kill the app with SIGPIPE.
+        _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
 
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -102,7 +104,11 @@ public final class LineJSONRPCSession: Sendable {
     public func notify(_ method: String, params: [String: Any]? = nil) throws {
         var message: [String: Any] = ["method": method]
         if let params { message["params"] = params }
-        try write(message)
+        try state.withLock { state in
+            if state.timedOut { throw JSONRPCSessionError.timedOut }
+            if let code = state.exited { throw JSONRPCSessionError.processExited(code) }
+            try write(message)
+        }
     }
 
     /// Close stdin and terminate the process (SIGTERM, then SIGKILL after 2 s).

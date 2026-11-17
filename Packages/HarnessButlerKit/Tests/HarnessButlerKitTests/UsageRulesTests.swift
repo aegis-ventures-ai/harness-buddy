@@ -63,6 +63,21 @@ import Testing
         let current = past.current(at: now)
         #expect(current.usedPercent == 0)
         #expect(try #require(current.resetsAt) == now.addingTimeInterval(4 * 3600))
+        // Many periods later, still the next boundary (computed in one step, not a loop).
+        let ancient = UsageWindow(id: "s", label: "s", usedPercent: 50, resetsAt: now.addingTimeInterval(-1_000 * 3600 - 1), duration: 3600)
+        #expect(ancient.current(at: now).resetsAt == now.addingTimeInterval(3600 - 1))
+        // Exactly on a boundary, the next one is a full period away.
+        let onBoundary = UsageWindow(id: "s", label: "s", usedPercent: 50, resetsAt: now.addingTimeInterval(-2 * 3600), duration: 3600)
+        #expect(onBoundary.current(at: now).resetsAt == now.addingTimeInterval(3600))
+    }
+
+    @Test func nonPositiveDurationDoesNotHang() {
+        for duration in [0, -60, -Double.infinity] as [TimeInterval] {
+            let window = UsageWindow(id: "s", label: "s", usedPercent: 80, resetsAt: now.addingTimeInterval(-10), duration: duration)
+            let current = window.current(at: now)
+            #expect(current.usedPercent == 0)
+            #expect(current.resetsAt == nil)
+        }
     }
 }
 

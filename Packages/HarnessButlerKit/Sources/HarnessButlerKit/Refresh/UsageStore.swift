@@ -109,28 +109,8 @@ public final class UsageStore {
 
     /// Load (or discover, on first launch) subscriptions, then start refreshing.
     public func start() async {
-        do {
-            if let saved = try file.load() {
-                subscriptions = saved
-            } else {
-                subscriptions = SubscriptionDiscovery.discover(homeDirectory: homeDirectory)
-                persist()
-            }
-        } catch {
-            saveError = "Couldn't read saved subscriptions: \(error.localizedDescription)"
-        }
-        let now = Date.now
-        for (id, snapshot) in cacheFile.load() {
-            guard let subscription = subscriptions.first(where: { $0.id == id }) else { continue }
-            var entry = SubscriptionUsage(snapshot: subscription.api == nil ? snapshot : snapshot.applyingBudget(subscription.api?.monthlyBudget))
-            // Treat the cached reading as the last attempt, so launch only re-reads stale data.
-            if snapshot.fetchedAt <= now { entry.refresh.lastAttempt = snapshot.fetchedAt }
-            usage[id] = entry
-        }
-        for (id, until) in cacheFile.loadBlocks() where until > now && subscriptions.contains(where: { $0.id == id }) {
-            usage[id, default: SubscriptionUsage()].refresh.blockedUntil = until
-            usage[id, default: SubscriptionUsage()].issue = .rateLimited(retryAfter: nil)
-        }
+        loadSubscriptions()
+        restoreCache(now: .now)
         try? FileManager.default.createDirectory(at: scratchDirectory, withIntermediateDirectories: true)
         environment = await HarnessEnvironment.resolve(homeDirectory: homeDirectory)
         refreshAll(.launch)
@@ -143,19 +123,60 @@ public final class UsageStore {
         }
     }
 
+    func loadSubscriptions() {
+        do {
+            if let saved = try file.load() {
+                subscriptions = saved
+            } else {
+                subscriptions = SubscriptionDiscovery.discover(homeDirectory: homeDirectory)
+                persist()
+            }
+        } catch {
+            saveError = "Couldn't read saved subscriptions: \(error.localizedDescription)"
+        }
+    }
+
+    /// Last good snapshots, and the back-off of subscriptions that were failing, from the cache file.
+    func restoreCache(now: Date) {
+        for (id, snapshot) in cacheFile.load() {
+            guard let subscription = subscriptions.first(where: { $0.id == id }) else { continue }
+            var entry = SubscriptionUsage(snapshot: subscription.api == nil ? snapshot : snapshot.applyingBudget(subscription.api?.monthlyBudget))
+            // Treat the cached reading as the last attempt, so launch only re-reads stale data.
+            if snapshot.fetchedAt <= now { entry.refresh.lastAttempt = snapshot.fetchedAt }
+            usage[id] = entry
+        }
+        // Failing subscriptions keep their back-off step and any provider-imposed quiet period.
+        for (id, record) in cacheFile.loadRetries() where subscriptions.contains(where: { $0.id == id }) {
+            var entry = usage[id, default: SubscriptionUsage()]
+            let blocked = record.blockedUntil.flatMap { $0 > now ? $0 : nil }
+            guard record.lastAttempt >= (entry.refresh.lastAttempt ?? .distantPast) || blocked != nil else { continue }
+            if record.lastAttempt <= now { entry.refresh.lastAttempt = max(record.lastAttempt, entry.refresh.lastAttempt ?? .distantPast) }
+            entry.refresh.consecutiveFailures = record.failures
+            entry.refresh.blockedUntil = blocked
+            entry.issue = record.issue
+            usage[id] = entry
+        }
+    }
+
     /// Stop polling and write the snapshot cache now (call on quit).
     public func stop() {
         ticker?.cancel()
         ticker = nil
         cacheSaveTask?.cancel()
         cacheSaveTask = nil
-        try? cacheFile.save(usage.compactMapValues(\.snapshot), blockedUntil: blocks)
+        try? cacheFile.save(usage.compactMapValues(\.snapshot), retries: retries)
     }
 
-    /// Provider-imposed quiet periods still running, persisted so a relaunch respects them.
-    private var blocks: [UUID: Date] {
+    /// Back-off of failing subscriptions (step and provider-imposed quiet period), persisted so a
+    /// relaunch respects it.
+    var retries: [UUID: RetryRecord] {
         let now = Date.now
-        return usage.compactMapValues { entry in entry.refresh.blockedUntil.flatMap { $0 > now ? $0 : nil } }
+        return usage.compactMapValues { entry in
+            guard let issue = entry.issue, let last = entry.refresh.lastAttempt else { return nil }
+            let blocked = entry.refresh.blockedUntil.flatMap { $0 > now ? $0 : nil }
+            guard entry.refresh.consecutiveFailures > 0 || blocked != nil else { return nil }
+            return RetryRecord(lastAttempt: last, failures: entry.refresh.consecutiveFailures, blockedUntil: blocked, issue: issue)
+        }
     }
 
     /// When this subscription will next be read automatically, if it's waiting on a rate limit or back-off.
@@ -228,7 +249,7 @@ public final class UsageStore {
         }
         entry.issue = report.issue
         usage[id] = entry
-        if report.snapshot != nil || entry.refresh.blockedUntil != nil { scheduleCacheSave() }
+        scheduleCacheSave()
         if let accepted {
             history?.record(accepted, for: id)
             onSnapshot?(subscription, accepted)
@@ -242,7 +263,7 @@ public final class UsageStore {
             try? await Task.sleep(for: .seconds(3))
             guard let self else { return }
             self.cacheSaveTask = nil
-            try? self.cacheFile.save(self.usage.compactMapValues(\.snapshot), blockedUntil: self.blocks)
+            try? self.cacheFile.save(self.usage.compactMapValues(\.snapshot), retries: self.retries)
         }
     }
 

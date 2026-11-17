@@ -190,6 +190,14 @@ public struct ConfigDocument: Sendable {
         }
     }
 
+    /// A new document holding only the value at `path` (or nothing). Used for `.claude.json`,
+    /// whose other keys (identity, project history) must not be kept in memory or in backups.
+    public func keeping(only path: [String]) throws -> ConfigDocument {
+        var scoped = ConfigDocument.empty(format)
+        if let value = value(at: path) { try scoped.apply(.set(path, value)) }
+        return scoped
+    }
+
     public mutating func apply(_ operations: [ConfigOperation]) throws {
         var copy = self
         for operation in operations { try copy.apply(operation) }

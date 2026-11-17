@@ -48,18 +48,18 @@ import Testing
 // MARK: - Claude rejected-credential gating
 
 final class FakeCredentials: ClaudeCredentialSource {
-    let state = Mutex((date: Date?(Date(timeIntervalSince1970: 1)), expiresAt: Date.distantFuture, reads: 0))
+    let state = Mutex((date: Date?(Date(timeIntervalSince1970: 1)), expiresAt: Date.distantFuture, reads: 0, token: "token"))
 
     func modificationDate(configDirOverride: String?, configDir: URL, environment: [String: String]) -> Date? {
         state.withLock { $0.date }
     }
 
     func read(configDirOverride: String?, configDir: URL, environment: [String: String]) async throws(ClaudeCredentialError) -> ClaudeCredentials {
-        let expiresAt = state.withLock { state in
+        let (expiresAt, token) = state.withLock { state in
             state.reads += 1
-            return state.expiresAt
+            return (state.expiresAt, state.token)
         }
-        return ClaudeCredentials(accessToken: "token", expiresAt: expiresAt, subscriptionType: "max", rateLimitTier: nil)
+        return ClaudeCredentials(accessToken: token, expiresAt: expiresAt, subscriptionType: "max", rateLimitTier: nil)
     }
 
     var reads: Int { state.withLock { $0.reads } }
@@ -137,11 +137,18 @@ final class StubURLProtocol: URLProtocol {
         #expect(StubURLProtocol.requests == 0)
     }
 
-    @Test func unknownCredentialVersionNeverBlocks() async {
+    @Test func unknownCredentialVersionGatesOnTheToken() async {
         fake.state.withLock { $0.date = nil }
         StubURLProtocol.status = 401
         _ = await provider.fetch(subscription, context: context())
-        _ = await provider.fetch(subscription, context: context())
+        let second = await provider.fetch(subscription, context: context())
+        #expect(second.issue == .tokenExpired(hint: Harness.claude.loginHint))
+        #expect(StubURLProtocol.requests == 1)
+        // A new token is a new credential version: try again.
+        fake.state.withLock { $0.token = "new-token" }
+        StubURLProtocol.status = 200
+        let third = await provider.fetch(subscription, context: context())
+        #expect(third.issue == nil)
         #expect(StubURLProtocol.requests == 2)
     }
 

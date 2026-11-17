@@ -45,6 +45,20 @@ enum LenientJSON {
     static func array(_ value: Any?) -> [[String: Any]]? { value as? [[String: Any]] }
 }
 
+/// A `retry-after` header: delay seconds or an HTTP date (RFC 9110 §10.2.3).
+enum RetryAfter {
+    static func parse(_ value: String?, now: Date = .now) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        if let seconds = TimeInterval(value) { return max(0, seconds) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        guard let date = formatter.date(from: value) else { return nil }
+        return max(0, date.timeIntervalSince(now))
+    }
+}
+
 /// ISO 8601 parsing that tolerates 0–9 fractional digits and `Z` or `±hh:mm` offsets
 /// (Claude sends microseconds, Grok milliseconds).
 enum ISO8601 {

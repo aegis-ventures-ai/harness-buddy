@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Writing to a harness child that already exited must fail, not terminate the app.
+        signal(SIGPIPE, SIG_IGN)
         AppSettings.registerDefaults()
         #if DEBUG
         store = DemoAPI.isEnabled ? DemoAPI.makeStore(appVersion: Self.appVersion) : UsageStore(appVersion: Self.appVersion)
@@ -72,6 +74,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             #endif
         }
+    }
+
+    /// Unsaved config edits survive closing Settings but not quitting: ask first.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let pending = config.pendingFiles
+        guard !pending.isEmpty else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Quit with unsaved config changes?"
+        let names = pending.map(\.kind.fileName).sorted().joined(separator: ", ")
+        alert.informativeText = "Changes to \(names) haven't been saved. Quitting discards them."
+        alert.addButton(withTitle: "Review Changes")
+        alert.addButton(withTitle: "Quit Anyway")
+        NSApp.activate()
+        if alert.runModal() == .alertSecondButtonReturn { return .terminateNow }
+        if let ref = pending.first, let profile = config.profiles.first(where: { config.files(of: $0).contains(ref) }) {
+            showSettings(page: .profile(profile.id))
+        } else {
+            showSettings()
+        }
+        return .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {

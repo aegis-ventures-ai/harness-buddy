@@ -61,6 +61,8 @@ public final class ConfigStore {
     public init(backups: ConfigBackupStore = .standard, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.backups = backups
         self.homeDirectory = homeDirectory
+        // Backups from earlier builds may hold all of `.claude.json`; cut them down to `mcpServers`.
+        Task.detached(priority: .utility) { [backups] in backups.scrubScopedBackups() }
     }
 
     public func setSubscriptions(_ subscriptions: [Subscription]) {
@@ -109,8 +111,14 @@ public final class ConfigStore {
             let empty = ConfigDocument.empty(ref.kind.format)
             return ConfigFileState(ref: ref, loaded: nil, original: empty, edited: empty)
         }
-        let loaded = try SafeFileWriter(backupDirectory: URL(filePath: "/dev/null")).load(ref.path)
-        let document = try ConfigDocument(format: ref.kind.format, bytes: loaded.bytes)
+        var loaded = try SafeFileWriter(backupDirectory: URL(filePath: "/dev/null")).load(ref.path)
+        var document = try ConfigDocument(format: ref.kind.format, bytes: loaded.bytes)
+        if let scope = ref.kind.scopedKeys {
+            // `.claude.json` also holds identity data and project history: keep only our keys.
+            // The snapshot (hash, mtime) still detects outside changes; saves re-read the file under lock.
+            document = try document.keeping(only: scope)
+            loaded.bytes = document.bytes
+        }
         var state = ConfigFileState(ref: ref, loaded: loaded, original: document, edited: document)
         var link = stat(), target = stat()
         state.isSymlink = lstat(ref.path, &link) == 0 && (link.st_mode & S_IFMT) == S_IFLNK
@@ -301,8 +309,10 @@ public final class ConfigStore {
             if state.loaded == nil, !FileManager.default.fileExists(atPath: ref.path) {
                 return try writer.withLock(lock) { try create(ref, bytes: state.edited.bytes, validate: validate); return nil }
             }
+            // The backup keeps only our keys too; restore only ever reads those.
+            let backupContent: ([UInt8]) throws -> [UInt8] = { try ConfigDocument(format: format, bytes: $0).keeping(only: scope).bytes }
             return try writer.withLock(lock) {
-                try writer.update(ref.path, validate: validate) { bytes in
+                try writer.update(ref.path, validate: validate, backupContent: backupContent) { bytes in
                     var fresh = try ConfigDocument(format: format, bytes: bytes)
                     guard fresh.value(at: scope) == original else { throw SafeWriteError.externalChange(current: nil) }
                     try fresh.apply(operations)
@@ -319,19 +329,39 @@ public final class ConfigStore {
         return try writer.write(bytes, over: loaded, validate: validate).backupPath
     }
 
-    /// Create a missing file (mode 0600). Fails if it appeared meanwhile.
+    /// Create a missing file (mode 0600) atomically: write and fsync a temp file in the same folder,
+    /// then rename it into place only if nothing exists there yet (`RENAME_EXCL`), and read it back.
     nonisolated static func create(_ ref: ConfigFileRef, bytes: [UInt8], validate: ([UInt8]) throws -> Void) throws {
-        try validate(bytes)
+        do { try validate(bytes) } catch { throw SafeWriteError.invalidContent("\(error)") }
         let folder = ref.url.deletingLastPathComponent().path(percentEncoded: false)
         guard FileManager.default.fileExists(atPath: folder) else { throw ConfigEditError("The folder \(folder) doesn't exist.") }
-        let fd = Darwin.open(ref.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-        guard fd >= 0 else {
-            if errno == EEXIST { throw SafeWriteError.externalChange(current: nil) }
-            throw SafeWriteError.posix("create", errno)
+        var template = Array("\(folder)/.\(ref.url.lastPathComponent).hb-XXXXXX".utf8CString)
+        let fd = mkstemp(&template)
+        guard fd >= 0 else { throw SafeWriteError.posix("mkstemp", errno) }
+        let tmp = String(decoding: template.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        var installed = false
+        defer { if !installed { unlink(tmp) } }
+        do {
+            defer { close(fd) }
+            try bytes.withUnsafeBytes { buffer in
+                var offset = 0
+                while offset < buffer.count {
+                    let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
+                    if n < 0 { if errno == EINTR { continue }; throw SafeWriteError.posix("write", errno) }
+                    offset += n
+                }
+            }
+            guard fchmod(fd, 0o600) == 0 else { throw SafeWriteError.posix("fchmod", errno) }
+            guard fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
         }
-        defer { close(fd) }
-        let written = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-        guard written == bytes.count, fsync(fd) == 0 else { throw SafeWriteError.posix("write", errno) }
+        guard renamex_np(tmp, ref.path, UInt32(RENAME_EXCL)) == 0 else {
+            if errno == EEXIST { throw SafeWriteError.externalChange(current: nil) }
+            throw SafeWriteError.posix("rename", errno)
+        }
+        installed = true
+        let dfd = Darwin.open(folder, O_RDONLY)
+        if dfd >= 0 { fsync(dfd); close(dfd) }
+        guard FileManager.default.contents(atPath: ref.path).map({ [UInt8]($0) }) == bytes else { throw SafeWriteError.verifyFailed }
     }
 
     static func message(for error: Error) -> String {

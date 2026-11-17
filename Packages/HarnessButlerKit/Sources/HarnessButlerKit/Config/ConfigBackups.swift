@@ -58,6 +58,34 @@ public struct ConfigBackupStore: Sendable {
         return [UInt8](data)
     }
 
+    /// Rewrites backups of key-scoped files (`.claude.json`) that hold more than the scoped keys,
+    /// as earlier builds wrote them, so identity data doesn't sit in the backup folder.
+    @discardableResult
+    public func scrubScopedBackups() -> Int {
+        let manager = FileManager.default
+        var scrubbed = 0
+        let folders = (try? manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        for kind in ConfigFileKind.allCases {
+            guard let scope = kind.scopedKeys else { continue }
+            for folder in folders where folder.lastPathComponent.hasPrefix(kind.rawValue + "-") {
+                let files = (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+                for url in files where url.pathExtension == "bak" {
+                    let path = url.path(percentEncoded: false)
+                    guard let data = manager.contents(atPath: path),
+                          let scoped = try? ConfigDocument(format: kind.format, bytes: [UInt8](data)).keeping(only: scope).bytes,
+                          scoped != [UInt8](data) else { continue }
+                    // Rewrite in place: the file keeps its 0600 mode and creation date (the backup's date).
+                    let fd = open(path, O_WRONLY | O_TRUNC)
+                    guard fd >= 0 else { continue }
+                    let ok = scoped.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0
+                    close(fd)
+                    if ok { scrubbed += 1 }
+                }
+            }
+        }
+        return scrubbed
+    }
+
     /// Delete backups older than the retention period.
     @discardableResult
     public func prune(for file: ConfigFileRef, now: Date = .now) -> Int {

@@ -17,27 +17,51 @@ public struct UsageCacheFile: Sendable {
     private struct Payload: Codable {
         var version = 1
         var snapshots: [UUID: UsageSnapshot]
-        /// Rate-limit quiet periods still running, so a relaunch doesn't retry early.
+        /// Back-off of subscriptions whose last read failed, so a relaunch doesn't retry early.
+        var retries: [UUID: RetryRecord]?
+        /// Written by earlier builds: rate-limit quiet periods only.
         var blockedUntil: [UUID: Date]?
     }
 
+    private func payload() -> Payload? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder.cache.decode(Payload.self, from: data)
+    }
+
     public func load() -> [UUID: UsageSnapshot] {
-        guard let data = try? Data(contentsOf: url),
-              let payload = try? JSONDecoder.cache.decode(Payload.self, from: data) else { return [:] }
-        return payload.snapshots
+        payload()?.snapshots ?? [:]
     }
 
-    public func loadBlocks() -> [UUID: Date] {
-        guard let data = try? Data(contentsOf: url),
-              let payload = try? JSONDecoder.cache.decode(Payload.self, from: data) else { return [:] }
-        return payload.blockedUntil ?? [:]
+    public func loadRetries() -> [UUID: RetryRecord] {
+        guard let payload = payload() else { return [:] }
+        var retries = payload.retries ?? [:]
+        for (id, until) in payload.blockedUntil ?? [:] where retries[id] == nil {
+            retries[id] = RetryRecord(lastAttempt: .distantPast, failures: 0, blockedUntil: until, issue: .rateLimited(retryAfter: nil))
+        }
+        return retries
     }
 
-    public func save(_ snapshots: [UUID: UsageSnapshot], blockedUntil: [UUID: Date] = [:]) throws {
+    public func save(_ snapshots: [UUID: UsageSnapshot], retries: [UUID: RetryRecord] = [:]) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try JSONEncoder.cache.encode(Payload(snapshots: snapshots, blockedUntil: blockedUntil.isEmpty ? nil : blockedUntil)).write(to: url, options: [.atomic])
+        try JSONEncoder.cache.encode(Payload(snapshots: snapshots, retries: retries.isEmpty ? nil : retries)).write(to: url, options: [.atomic])
         // Private to the user, like the rest of the app's data (spend totals, budgets).
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
+    }
+}
+
+/// A failing subscription's back-off state (U-12), persisted so relaunching the app doesn't reset it.
+/// Holds times, a count and the row's issue (a short status message): no tokens or response data.
+public struct RetryRecord: Codable, Hashable, Sendable {
+    public var lastAttempt: Date
+    public var failures: Int
+    public var blockedUntil: Date?
+    public var issue: UsageIssue
+
+    public init(lastAttempt: Date, failures: Int, blockedUntil: Date?, issue: UsageIssue) {
+        self.lastAttempt = lastAttempt
+        self.failures = failures
+        self.blockedUntil = blockedUntil
+        self.issue = issue
     }
 }
 

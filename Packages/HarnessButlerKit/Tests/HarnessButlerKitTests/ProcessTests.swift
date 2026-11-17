@@ -72,6 +72,22 @@ import Testing
         }
     }
 
+    @Test func writingToAnExitedChildFailsInsteadOfRaisingSIGPIPE() async throws {
+        // SIGPIPE's default action would end the test process; the session must turn it into an error.
+        let session = try LineJSONRPCSession(
+            executable: sh, arguments: ["-c", "exec 0<&-; exit 3"], environment: [:], includeVersionField: false, timeout: .seconds(5)
+        )
+        defer { session.close() }
+        let deadline = Date.now.addingTimeInterval(5)
+        var failed = false
+        while !failed, Date.now < deadline {
+            do { try session.notify("initialized", params: ["padding": String(repeating: "x", count: 70_000)]) } catch { failed = true }
+            if !failed { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        #expect(failed)
+        await #expect(throws: (any Error).self) { _ = try await session.request("initialize") }
+    }
+
     @Test func searchPathMergesLoginShellProcessAndWellKnown() {
         let home = URL(filePath: "/Users/test", directoryHint: .isDirectory)
         let path = HarnessEnvironment.mergedSearchPath(loginShellPath: "/custom/bin:/usr/bin", processPath: "/usr/bin:/bin", homeDirectory: home)
