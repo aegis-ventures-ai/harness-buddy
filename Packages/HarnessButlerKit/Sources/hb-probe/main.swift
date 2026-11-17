@@ -4,12 +4,26 @@ import Foundation
 import HarnessButlerKit
 
 let home = FileManager.default.homeDirectoryForCurrentUser
-let subscriptions = (try? SubscriptionFile.standard.load()) ?? SubscriptionDiscovery.discover(homeDirectory: home)
+var subscriptions = (try? SubscriptionFile.standard.load()) ?? SubscriptionDiscovery.discover(homeDirectory: home)
+// --api-env anthropic|openai: read API spend with the Admin key in $HB_ADMIN_KEY (held in memory only,
+// never printed). Without it, saved API subscriptions are skipped so the probe never reads the Keychain.
+var secrets: any SecretStore = InMemorySecretStore()
+if let index = CommandLine.arguments.firstIndex(of: "--api-env"), index + 1 < CommandLine.arguments.count,
+   let provider = APIProvider(rawValue: CommandLine.arguments[index + 1]) {
+    let key = ProcessInfo.processInfo.environment["HB_ADMIN_KEY"] ?? ""
+    let subscription = Subscription.api(APIAccount(provider: provider, monthlyBudget: ProcessInfo.processInfo.environment["HB_BUDGET"].flatMap(Double.init)),
+                                        name: provider.displayName)
+    secrets = InMemorySecretStore([subscription.id.uuidString: key])
+    subscriptions = [subscription]
+} else {
+    subscriptions.removeAll { $0.api != nil }
+}
 let environment = await HarnessEnvironment.resolve(homeDirectory: home)
 let scratch = FileManager.default.temporaryDirectory.appending(path: "HarnessButler-cwd", directoryHint: .isDirectory)
 try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-let providers: [Harness: any UsageProvider] = [
-    .claude: ClaudeUsageProvider(), .codex: CodexAppServerUsageProvider(), .grok: GrokACPUsageProvider(),
+let providers: [UsageProviderKey: any UsageProvider] = [
+    .harness(.claude): ClaudeUsageProvider(), .harness(.codex): CodexAppServerUsageProvider(), .harness(.grok): GrokACPUsageProvider(),
+    .api(.anthropic): AnthropicAdminUsageProvider(secrets: secrets), .api(.openai): OpenAIAdminUsageProvider(secrets: secrets),
 ]
 let forceLive = CommandLine.arguments.contains("--live")
 // --offline-codex: hide the codex binary to exercise the session-log fallback.
@@ -95,13 +109,13 @@ for subscription in subscriptions {
         : environment
     let context = UsageFetchContext(
         environment: env, now: now,
-        acceptableCacheAge: forceLive ? 0 : subscription.harness.refreshInterval,
+        acceptableCacheAge: forceLive ? 0 : subscription.cadence.refreshInterval,
         appVersion: "probe", scratchDirectory: scratch
     )
     let started = ContinuousClock.now
-    let report = await providers[subscription.harness]!.fetch(subscription, context: context)
-    print("\n\(subscription.name)  [\(subscription.harness.displayName)]  \(subscription.sourceDescription())  (\(ContinuousClock.now - started))")
-    if subscription.harness == .claude {
+    let report = await providers[subscription.providerKey]!.fetch(subscription, context: context)
+    print("\n\(subscription.name)  [\(subscription.kindName)]  \(subscription.sourceDescription())  (\(ContinuousClock.now - started))")
+    if subscription.harness == .claude, subscription.isHarnessLogin {
         let changed = claude.credentialModificationDate(for: subscription, environment: environment)
         print("  credential last changed: \(changed.map { "\(Int(now.timeIntervalSince($0) / 60))m ago" } ?? "unknown")")
     }
@@ -111,6 +125,11 @@ for subscription in subscriptions {
         for window in current.windows {
             let pace = UsageRules.pace(of: window, at: now).map { String(format: "%+.0f", $0.deltaPercent) } ?? "–"
             print("  - \(window.label): \(Int(window.usedPercent))% used, resets \(window.resetsAt?.formatted(.relative(presentation: .named)) ?? "?"), pace \(pace)")
+        }
+        if let spend = snapshot.spend {
+            print(String(format: "  spend: %.2f %@ month to date, %.2f/day, projected %.2f; %d day(s) with spend; data through %@",
+                         spend.monthToDate, spend.currency, spend.dailyRunRate(at: now), spend.projectedMonthEnd(at: now),
+                         spend.daily.count, spend.dataThrough?.formatted() ?? "now"))
         }
         if let credits = snapshot.credits { print("  credits: \(credits.usedMinor)/\(credits.limitMinor ?? 0) \(credits.currency) minor units") }
     }

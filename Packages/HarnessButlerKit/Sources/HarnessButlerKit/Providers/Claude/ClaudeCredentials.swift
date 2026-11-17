@@ -82,7 +82,7 @@ extension Subscription {
     /// The Keychain item Claude Code uses for this config dir, shown in Settings so a mismatched
     /// path (trailing `/`, unexpanded `~`) is easy to spot.
     public var claudeKeychainService: String? {
-        harness == .claude ? ClaudeKeychain.serviceName(configDirOverride: homeOverride) : nil
+        harness == .claude && isHarnessLogin ? ClaudeKeychain.serviceName(configDirOverride: homeOverride) : nil
     }
 }
 

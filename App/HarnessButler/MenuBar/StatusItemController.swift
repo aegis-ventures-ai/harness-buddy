@@ -166,7 +166,7 @@ enum MenuBarTitle {
             let snapshot = usage.snapshot?.current(at: now)
             let window = snapshot.flatMap { UsageRules.headlineWindow(of: $0, at: now) }
             let status = window.map { UsageRules.status(of: $0, at: now) } ?? .onTrack
-            let stale = SubscriptionGroup.classify(usage, harness: subscription.harness, at: now) == .stale
+            let stale = SubscriptionGroup.classify(usage, cadence: subscription.cadence, at: now) == .stale
 
             let color: NSColor = switch status {
             case .limited: NSColor(hex: 0xEC6F6F)
@@ -175,7 +175,9 @@ enum MenuBarTitle {
             }
 
             result.append(logo(for: subscription.harness, font: font))
-            let text = window.map { Format.percent($0.remainingPercent) } ?? "–"
+            // API spend without a budget has no window: show the month-to-date amount instead.
+            let text = window.map { Format.percent($0.remainingPercent) }
+                ?? snapshot?.spend.map { Format.compactDollars($0.monthToDate, currency: $0.currency) } ?? "–"
             result.append(NSAttributedString(string: "\u{2009}" + text, attributes: [.font: font, .foregroundColor: color]))
 
             // Never colour-only (M-3): at risk and limited also get a symbol.
@@ -226,6 +228,9 @@ enum MenuBarTitle {
         return items.map { subscription, usage in
             guard let snapshot = usage.snapshot?.current(at: now),
                   let window = UsageRules.headlineWindow(of: snapshot, at: now) else {
+                if let spend = usage.snapshot?.spend {
+                    return "\(subscription.name): \(Format.dollars(spend.monthToDate, currency: spend.currency)) this month, projected \(Format.dollars(spend.projectedMonthEnd(at: now), currency: spend.currency))"
+                }
                 return "\(subscription.name): \(usage.issue?.message ?? "loading…")"
             }
             return "\(subscription.name): \(Format.percent(window.remainingPercent)) left (\(window.label)), \(Format.resets(window.resetsAt, now: now))"

@@ -22,8 +22,12 @@ public enum SubscriptionGroup: Int, CaseIterable, Sendable, Comparable {
     /// U-8 grouping. Errors and data older than `Harness.staleAfter` are stale; otherwise the worst window decides.
     /// A subscription with nothing yet (still loading) counts as on track.
     public static func classify(_ usage: SubscriptionUsage, harness: Harness, at now: Date) -> SubscriptionGroup {
+        classify(usage, cadence: harness.cadence, at: now)
+    }
+
+    public static func classify(_ usage: SubscriptionUsage, cadence: UsageCadence, at now: Date) -> SubscriptionGroup {
         guard let snapshot = usage.snapshot else { return usage.issue == nil ? .onTrack : .stale }
-        if usage.issue != nil || now.timeIntervalSince(snapshot.fetchedAt) > harness.staleAfter { return .stale }
+        if usage.issue != nil || now.timeIntervalSince(snapshot.fetchedAt) > cadence.staleAfter { return .stale }
         switch UsageRules.status(of: snapshot.current(at: now), at: now) {
         case .limited: return .limited
         case .atRisk: return .atRisk
@@ -61,7 +65,11 @@ public final class UsageStore {
     @ObservationIgnored private let file: SubscriptionFile
     @ObservationIgnored private let cacheFile: UsageCacheFile
     @ObservationIgnored private var cacheSaveTask: Task<Void, Never>?
-    @ObservationIgnored private let providers: [Harness: any UsageProvider]
+    @ObservationIgnored private let providers: [UsageProviderKey: any UsageProvider]
+    /// Admin keys for API subscriptions (U-3).
+    @ObservationIgnored public let secrets: any SecretStore
+    /// Called with every new snapshot (history, alerts).
+    @ObservationIgnored public var onSnapshot: ((Subscription, UsageSnapshot) -> Void)?
     @ObservationIgnored private let appVersion: String
     @ObservationIgnored private let homeDirectory: URL
     /// Resolved during `start()`; shared with `HarnessStore`.
@@ -73,14 +81,20 @@ public final class UsageStore {
     public init(
         file: SubscriptionFile = .standard,
         cacheFile: UsageCacheFile = .standard,
-        providers: [any UsageProvider] = [ClaudeUsageProvider(), CodexAppServerUsageProvider(), GrokACPUsageProvider()],
+        providers: [any UsageProvider]? = nil,
+        secrets: any SecretStore = KeychainSecretStore(),
         appVersion: String,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         onBattery: @escaping @Sendable () -> Bool = { PowerSource.shouldConserve }
     ) {
         self.file = file
         self.cacheFile = cacheFile
-        self.providers = Dictionary(uniqueKeysWithValues: providers.map { ($0.harness, $0) })
+        self.secrets = secrets
+        let all = providers ?? [
+            ClaudeUsageProvider(), CodexAppServerUsageProvider(), GrokACPUsageProvider(),
+            AnthropicAdminUsageProvider(secrets: secrets), OpenAIAdminUsageProvider(secrets: secrets),
+        ]
+        self.providers = Dictionary(all.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         self.appVersion = appVersion
         self.homeDirectory = homeDirectory
         self.onBattery = onBattery
@@ -101,8 +115,9 @@ public final class UsageStore {
         } catch {
             saveError = "Couldn't read saved subscriptions: \(error.localizedDescription)"
         }
-        for (id, snapshot) in cacheFile.load() where subscriptions.contains(where: { $0.id == id }) {
-            usage[id] = SubscriptionUsage(snapshot: snapshot)
+        for (id, snapshot) in cacheFile.load() {
+            guard let subscription = subscriptions.first(where: { $0.id == id }) else { continue }
+            usage[id] = SubscriptionUsage(snapshot: subscription.api == nil ? snapshot : snapshot.applyingBudget(subscription.api?.monthlyBudget))
         }
         try? FileManager.default.createDirectory(at: scratchDirectory, withIntermediateDirectories: true)
         environment = await HarnessEnvironment.resolve(homeDirectory: homeDirectory)
@@ -132,7 +147,7 @@ public final class UsageStore {
     public func usage(for id: UUID) -> SubscriptionUsage { usage[id] ?? SubscriptionUsage() }
 
     public func group(for subscription: Subscription, at now: Date = .now) -> SubscriptionGroup {
-        SubscriptionGroup.classify(usage(for: subscription.id), harness: subscription.harness, at: now)
+        SubscriptionGroup.classify(usage(for: subscription.id), cadence: subscription.cadence, at: now)
     }
 
     /// True when the subscription's data is stale or errored (dims it in the menubar).
@@ -150,11 +165,11 @@ public final class UsageStore {
         guard !isPaused || trigger == .manual,
               let environment,
               let subscription = subscriptions.first(where: { $0.id == id }),
-              let provider = providers[subscription.harness] else { return }
+              let provider = providers[subscription.providerKey] else { return }
         var entry = usage(for: id)
         let now = Date.now
         guard RefreshPolicy.shouldRefresh(
-            harness: subscription.harness, state: entry.refresh, snapshot: entry.snapshot,
+            cadence: subscription.cadence, state: entry.refresh, snapshot: entry.snapshot,
             trigger: trigger, now: now, onBattery: onBattery()
         ) else { return }
 
@@ -163,7 +178,7 @@ public final class UsageStore {
         let context = UsageFetchContext(
             environment: environment,
             now: now,
-            acceptableCacheAge: RefreshPolicy.acceptableCacheAge(harness: subscription.harness, trigger: trigger),
+            acceptableCacheAge: RefreshPolicy.acceptableCacheAge(cadence: subscription.cadence, trigger: trigger),
             appVersion: appVersion,
             scratchDirectory: scratchDirectory
         )
@@ -173,16 +188,21 @@ public final class UsageStore {
         }
     }
 
-    private func apply(_ report: UsageReport, to id: UUID) {
-        guard subscriptions.contains(where: { $0.id == id }) else { return }
+    func apply(_ report: UsageReport, to id: UUID) {
+        guard let subscription = subscriptions.first(where: { $0.id == id }) else { return }
         var entry = usage(for: id)
         RefreshPolicy.record(report, into: &entry.refresh, at: .now)
-        if let snapshot = report.snapshot, snapshot.fetchedAt >= (entry.snapshot?.fetchedAt ?? .distantPast) {
+        var accepted: UsageSnapshot?
+        if var snapshot = report.snapshot, snapshot.fetchedAt >= (entry.snapshot?.fetchedAt ?? .distantPast) {
+            // The budget may have changed while the read was in flight.
+            if let api = subscription.api { snapshot = snapshot.applyingBudget(api.monthlyBudget) }
+            if snapshot != entry.snapshot { accepted = snapshot }
             entry.snapshot = snapshot
         }
         entry.issue = report.issue
         usage[id] = entry
         if report.snapshot != nil { scheduleCacheSave() }
+        if let accepted { onSnapshot?(subscription, accepted) }
     }
 
     /// Coalesce writes: at most one save every few seconds.
@@ -209,6 +229,61 @@ public final class UsageStore {
         return nil
     }
 
+    /// U-3: adds an API-spend subscription and stores its Admin key in the Keychain.
+    /// Returns a message when the name is invalid or the key can't be saved.
+    @discardableResult
+    public func addAPI(name: String, provider: APIProvider, key: String, monthlyBudget: Double?) -> String? {
+        if let error = SubscriptionNames.validate(name, among: subscriptions) { return error.message }
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = provider.keyProblem(key) { return problem }
+        let subscription = Subscription.api(APIAccount(provider: provider, monthlyBudget: Self.validBudget(monthlyBudget)),
+                                            name: SubscriptionNames.normalized(name))
+        do {
+            try secrets.write(key, account: subscription.id.uuidString)
+        } catch {
+            return "Couldn't save the key: \(error.message)"
+        }
+        subscriptions.append(subscription)
+        persist()
+        refresh(subscription.id, .launch)
+        return nil
+    }
+
+    /// Replaces an API subscription's Admin key and reads again.
+    @discardableResult
+    public func replaceKey(_ id: UUID, with key: String) -> String? {
+        guard let subscription = subscriptions.first(where: { $0.id == id }), let api = subscription.api else { return nil }
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = api.provider.keyProblem(key) { return problem }
+        do {
+            try secrets.write(key, account: id.uuidString)
+        } catch {
+            return "Couldn't save the key: \(error.message)"
+        }
+        var entry = usage(for: id)
+        entry.refresh = RefreshState()
+        usage[id] = entry
+        refresh(id, .launch)
+        return nil
+    }
+
+    /// U-7: sets or clears the monthly budget; the budget window updates without a refetch.
+    public func setBudget(_ id: UUID, _ budget: Double?) {
+        guard let index = subscriptions.firstIndex(where: { $0.id == id }), subscriptions[index].api != nil else { return }
+        subscriptions[index].api?.monthlyBudget = Self.validBudget(budget)
+        persist()
+        if var entry = usage[id], let snapshot = entry.snapshot {
+            entry.snapshot = snapshot.applyingBudget(subscriptions[index].api?.monthlyBudget)
+            usage[id] = entry
+            scheduleCacheSave()
+        }
+    }
+
+    static func validBudget(_ budget: Double?) -> Double? {
+        guard let budget, budget.isFinite, budget > 0 else { return nil }
+        return budget
+    }
+
     @discardableResult
     public func rename(_ id: UUID, to name: String) -> SubscriptionNameError? {
         if let error = SubscriptionNames.validate(name, among: subscriptions, excluding: id) { return error }
@@ -219,6 +294,9 @@ public final class UsageStore {
     }
 
     public func remove(_ id: UUID) {
+        if subscriptions.first(where: { $0.id == id })?.api != nil {
+            try? secrets.delete(account: id.uuidString)
+        }
         subscriptions.removeAll { $0.id == id }
         usage[id] = nil
         persist()

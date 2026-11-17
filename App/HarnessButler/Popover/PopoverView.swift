@@ -198,6 +198,10 @@ struct SubscriptionRow: View {
                         Text("\(Format.percent(window.remainingPercent)) left")
                             .font(Theme.mono(12, weight: .semibold))
                             .foregroundStyle(status == .onTrack ? Color.primary : Theme.color(for: status, harness: subscription.harness))
+                    } else if let spend = snapshot?.spend {
+                        StatusRing(status: .onTrack, stale: stale)
+                        Text("\(Format.dollars(spend.monthToDate, currency: spend.currency)) this month")
+                            .font(Theme.mono(12, weight: .semibold))
                     } else if usage.isLoading {
                         ProgressView().controlSize(.mini)
                     }
@@ -227,6 +231,9 @@ struct SubscriptionRow: View {
                     .font(Theme.mono(10))
                     .lineLimit(1)
                 }
+                if let spend = snapshot?.spend {
+                    SpendLine(spend: spend, budget: subscription.api?.monthlyBudget, now: now, showsReset: window == nil)
+                }
                 if let issue = usage.issue {
                     Text(issue.message).font(Theme.mono(10)).foregroundStyle(Theme.bad).lineLimit(2)
                 }
@@ -243,8 +250,39 @@ struct SubscriptionRow: View {
     }
 
     private func accessibilityLabel(window: UsageWindow?) -> String {
+        if window == nil, let spend = store.usage(for: subscription.id).snapshot?.spend {
+            return "\(subscription.name), \(Format.dollars(spend.monthToDate, currency: spend.currency)) spent this month, projected \(Format.dollars(spend.projectedMonthEnd(at: now), currency: spend.currency))"
+        }
         guard let window else { return "\(subscription.name), no data yet" }
         return "\(subscription.name), \(window.label), \(Int(window.remainingPercent.rounded())) percent left, \(Format.resets(window.resetsAt, now: now))"
+    }
+}
+
+/// U-7: "$412 of $1,000 · $27/day · projected $830".
+struct SpendLine: View {
+    let spend: APISpend
+    let budget: Double?
+    let now: Date
+    var showsReset = false
+
+    var body: some View {
+        let projected = spend.projectedMonthEnd(at: now)
+        let overBudget = budget.map { projected > $0 } ?? false
+        HStack(spacing: 0) {
+            if let budget {
+                Text("\(Format.dollars(spend.monthToDate, currency: spend.currency)) of \(Format.dollars(budget, currency: spend.currency)) · ")
+            }
+            Text("\(Format.dollars(spend.dailyRunRate(at: now), currency: spend.currency))/day · ")
+            Text("projected \(Format.dollars(projected, currency: spend.currency))")
+                .foregroundStyle(overBudget ? Theme.warn : .secondary)
+            Spacer(minLength: 8)
+            if showsReset {
+                Text(Format.resets(spend.periodEnd, now: now))
+            }
+        }
+        .font(Theme.mono(10))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
     }
 }
 

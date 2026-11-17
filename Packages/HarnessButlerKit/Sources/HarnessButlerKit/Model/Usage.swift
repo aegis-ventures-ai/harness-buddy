@@ -76,13 +76,16 @@ public struct UsageSnapshot: Codable, Hashable, Sendable {
     /// When the underlying data was fetched (for a harness cache, when the harness fetched it).
     public var fetchedAt: Date
     public var source: UsageSource
+    /// Month-to-date spend, for API subscriptions (U-7).
+    public var spend: APISpend?
 
-    public init(windows: [UsageWindow], planName: String?, credits: UsageCredits? = nil, fetchedAt: Date, source: UsageSource) {
+    public init(windows: [UsageWindow], planName: String?, credits: UsageCredits? = nil, fetchedAt: Date, source: UsageSource, spend: APISpend? = nil) {
         self.windows = windows
         self.planName = planName
         self.credits = credits
         self.fetchedAt = fetchedAt
         self.source = source
+        self.spend = spend
     }
 
     public func current(at now: Date) -> UsageSnapshot {

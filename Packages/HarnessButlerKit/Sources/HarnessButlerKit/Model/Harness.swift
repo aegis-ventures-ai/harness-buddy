@@ -78,4 +78,25 @@ public enum Harness: String, Codable, CaseIterable, Sendable, Identifiable {
         case .grok: 5 * 60
         }
     }
+
+    public var cadence: UsageCadence {
+        UsageCadence(refreshInterval: refreshInterval, popoverStaleness: popoverStaleness, staleAfter: staleAfter)
+    }
+}
+
+/// How often a subscription is read and when its data counts as stale (U-12).
+public struct UsageCadence: Hashable, Sendable {
+    public var refreshInterval: TimeInterval
+    public var popoverStaleness: TimeInterval
+    public var staleAfter: TimeInterval
+
+    public init(refreshInterval: TimeInterval, popoverStaleness: TimeInterval, staleAfter: TimeInterval) {
+        self.refreshInterval = refreshInterval
+        self.popoverStaleness = popoverStaleness
+        self.staleAfter = staleAfter
+    }
+
+    /// Admin usage APIs refresh within hours (Anthropic: typically 4 h, up to 24 h), so polling
+    /// every 30 minutes misses nothing; data counts as stale after 3 failed or missed reads.
+    public static let apiSpend = UsageCadence(refreshInterval: 30 * 60, popoverStaleness: 10 * 60, staleAfter: 3 * 60 * 60)
 }

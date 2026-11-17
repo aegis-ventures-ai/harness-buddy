@@ -12,7 +12,7 @@ struct HarnessesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             let shown = Harness.allCases.filter { harness in
-                harnesses.status(for: harness).installation != nil || store.subscriptions.contains { $0.harness == harness }
+                harnesses.status(for: harness).installation != nil || store.subscriptions.contains { $0.harness == harness && $0.isHarnessLogin }
             }
             if shown.isEmpty {
                 Text(harnesses.lastDetection == nil ? "Looking for harnesses…" : "No harnesses found on this Mac.")
@@ -26,12 +26,12 @@ struct HarnessesView: View {
                     run: harnesses.runs[harness],
                     releaseNotes: harnesses.releaseNotes[harness],
                     notesLoading: harnesses.releaseNotesLoading.contains(harness),
-                    profiles: store.subscriptions.filter { $0.harness == harness }.count,
+                    profiles: store.subscriptions.filter { $0.harness == harness && $0.isHarnessLogin }.count,
                     now: now,
                     update: { harnesses.update(harness) },
                     cancel: { harnesses.cancelUpdate(harness) },
                     dismiss: { harnesses.dismissRun(harness) },
-                    configure: store.subscriptions.contains { $0.harness == harness } ? { configure(harness) } : nil
+                    configure: store.subscriptions.contains { $0.harness == harness && $0.isHarnessLogin } ? { configure(harness) } : nil
                 )
                 if harness != shown.last { Divider().padding(.leading, 46) }
             }

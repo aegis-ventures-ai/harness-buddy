@@ -17,7 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.registerDefaults()
+        #if DEBUG
+        store = DemoAPI.isEnabled ? DemoAPI.makeStore(appVersion: Self.appVersion) : UsageStore(appVersion: Self.appVersion)
+        #else
         store = UsageStore(appVersion: Self.appVersion)
+        #endif
         harnesses = HarnessStore(appVersion: Self.appVersion)
         statusItem = StatusItemController(store: store, harnesses: harnesses, openSettings: { [weak self] in self?.showSettings(page: $0) })
         // Before the first check, so a notification clicked while the app wasn't running is delivered.

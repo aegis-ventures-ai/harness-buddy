@@ -1,7 +1,8 @@
+import Charts
 import HarnessButlerKit
 import SwiftUI
 
-/// U-9 detail: every window, source path, last refresh. History sparkline arrives with U-10 (M4).
+/// U-9 detail: every window, source path, last refresh, and for API subscriptions the spend (U-7).
 struct SubscriptionDetailView: View {
     let store: UsageStore
     let harnesses: HarnessStore
@@ -31,7 +32,9 @@ struct SubscriptionDetailView: View {
             Divider()
 
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                harnessRow
+                if subscription.isHarnessLogin {
+                    harnessRow
+                }
                 row("source", subscription.sourceDescription())
                 if let snapshot {
                     row("updated", "\(Format.age(snapshot.fetchedAt, now: now)) · \(snapshot.source == .live ? "live" : "harness cache")")
@@ -50,6 +53,9 @@ struct SubscriptionDetailView: View {
 
             if let snapshot {
                 VStack(alignment: .leading, spacing: 12) {
+                    if let spend = snapshot.spend {
+                        spendSection(spend)
+                    }
                     ForEach(snapshot.windows) { window in
                         windowRow(window)
                     }
@@ -118,6 +124,56 @@ struct SubscriptionDetailView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(subscription.name), \(window.label), \(Int(window.remainingPercent.rounded())) percent left, \(Format.resets(window.resetsAt, now: now))")
     }
+
+    @ViewBuilder
+    private func spendSection(_ spend: APISpend) -> some View {
+        let budget = subscription.api?.monthlyBudget
+        let money = { (amount: Double) in Format.dollars(amount, currency: spend.currency) }
+        VStack(alignment: .leading, spacing: 6) {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                row("month to date", money(spend.monthToDate))
+                row("run rate", "\(money(spend.dailyRunRate(at: now))) per day")
+                GridRow {
+                    Text("projected").foregroundStyle(.secondary)
+                    let projected = spend.projectedMonthEnd(at: now)
+                    Text("\(money(projected)) by month end")
+                        .foregroundStyle(budget.map { projected > $0 } == true ? Theme.warn : .primary)
+                }
+                row("budget", budget.map(money) ?? "none (set one in Settings → Subscriptions)")
+                row("billing month", "\(spend.periodStart.formatted(.dateTime.month(.wide).year())) (UTC) · \(Format.resets(spend.periodEnd, now: now))")
+                if let through = spend.dataThrough {
+                    row("data through", "\(Format.age(through, now: now)) · providers report spend with a delay")
+                }
+            }
+            .font(Theme.mono(11))
+            dailyChart(spend)
+        }
+    }
+
+    /// The last 7 UTC days of spend (U-9 sparkline for API subscriptions).
+    private func dailyChart(_ spend: APISpend) -> some View {
+        let days = spend.lastDays(7, at: now)
+        return VStack(alignment: .leading, spacing: 3) {
+            Text("last 7 days").font(Theme.mono(10)).foregroundStyle(.secondary)
+            // Billing days are UTC days, so label them in UTC (7 consecutive days have distinct weekdays).
+            Chart(days, id: \.day) { day in
+                BarMark(x: .value("Day", day.day.formatted(Date.FormatStyle(timeZone: .gmt).weekday(.abbreviated))), y: .value("Spend", day.amount))
+                    .foregroundStyle(Theme.color(for: subscription.harness))
+                    .cornerRadius(2)
+            }
+            .chartYAxis {
+                AxisMarks(position: .trailing, values: .automatic(desiredCount: 2)) { value in
+                    AxisGridLine()
+                    AxisValueLabel { if let amount = value.as(Double.self) { Text(Format.compactDollars(amount, currency: spend.currency)) } }
+                }
+            }
+            .font(Theme.mono(9))
+            .frame(height: 64)
+            .accessibilityLabel("Spend over the last 7 days: " + days.map { money(for: $0.amount, spend) }.joined(separator: ", "))
+        }
+    }
+
+    private func money(for amount: Double, _ spend: APISpend) -> String { Format.dollars(amount, currency: spend.currency) }
 
     private func creditsRow(_ credits: UsageCredits) -> some View {
         let used = Format.money(credits.usedMinor, exponent: credits.exponent, currency: credits.currency)

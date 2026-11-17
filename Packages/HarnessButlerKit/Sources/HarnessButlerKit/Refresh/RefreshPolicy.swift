@@ -33,8 +33,17 @@ public enum RefreshPolicy {
         snapshot: UsageSnapshot?,
         onBattery: Bool
     ) -> Date {
+        nextDue(cadence: harness.cadence, state: state, snapshot: snapshot, onBattery: onBattery)
+    }
+
+    public static func nextDue(
+        cadence: UsageCadence,
+        state: RefreshState,
+        snapshot: UsageSnapshot?,
+        onBattery: Bool
+    ) -> Date {
         guard let last = state.lastAttempt else { return .distantPast }
-        let interval = harness.refreshInterval * (onBattery ? batteryMultiplier : 1)
+        let interval = cadence.refreshInterval * (onBattery ? batteryMultiplier : 1)
         var due: Date
         if state.consecutiveFailures > 0 {
             due = last.addingTimeInterval(max(interval, backoff[min(state.consecutiveFailures, backoff.count) - 1]))
@@ -57,6 +66,17 @@ public enum RefreshPolicy {
         now: Date,
         onBattery: Bool
     ) -> Bool {
+        shouldRefresh(cadence: harness.cadence, state: state, snapshot: snapshot, trigger: trigger, now: now, onBattery: onBattery)
+    }
+
+    public static func shouldRefresh(
+        cadence: UsageCadence,
+        state: RefreshState,
+        snapshot: UsageSnapshot?,
+        trigger: RefreshTrigger,
+        now: Date,
+        onBattery: Bool
+    ) -> Bool {
         if state.inFlight { return false }
         if let blocked = state.blockedUntil, now < blocked { return false }
         let sinceAttempt = state.lastAttempt.map { now.timeIntervalSince($0) } ?? .infinity
@@ -67,20 +87,24 @@ public enum RefreshPolicy {
             return sinceAttempt >= manualMinimumGap
         case .popoverOpened:
             if state.consecutiveFailures > 0 {
-                return now >= nextDue(harness: harness, state: state, snapshot: snapshot, onBattery: onBattery)
+                return now >= nextDue(cadence: cadence, state: state, snapshot: snapshot, onBattery: onBattery)
             }
             let dataAge = snapshot.map { now.timeIntervalSince($0.fetchedAt) } ?? .infinity
-            return dataAge >= harness.popoverStaleness && sinceAttempt >= min(harness.popoverStaleness, manualMinimumGap)
+            return dataAge >= cadence.popoverStaleness && sinceAttempt >= min(cadence.popoverStaleness, manualMinimumGap)
         case .scheduled:
-            return now >= nextDue(harness: harness, state: state, snapshot: snapshot, onBattery: onBattery)
+            return now >= nextDue(cadence: cadence, state: state, snapshot: snapshot, onBattery: onBattery)
         }
     }
 
     /// How fresh harness-cached data must be to skip a live read for this trigger.
     public static func acceptableCacheAge(harness: Harness, trigger: RefreshTrigger) -> TimeInterval {
+        acceptableCacheAge(cadence: harness.cadence, trigger: trigger)
+    }
+
+    public static func acceptableCacheAge(cadence: UsageCadence, trigger: RefreshTrigger) -> TimeInterval {
         switch trigger {
-        case .launch, .scheduled: harness.refreshInterval
-        case .popoverOpened, .manual: harness.popoverStaleness
+        case .launch, .scheduled: cadence.refreshInterval
+        case .popoverOpened, .manual: cadence.popoverStaleness
         }
     }
 

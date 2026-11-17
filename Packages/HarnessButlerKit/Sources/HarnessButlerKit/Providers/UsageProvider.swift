@@ -1,9 +1,20 @@
 import Foundation
 
-/// Reads one subscription's usage. One implementation per harness; adding a harness is additive.
+/// Reads one subscription's usage. One implementation per harness or API; adding one is additive.
 public protocol UsageProvider: Sendable {
     var harness: Harness { get }
+    /// Which subscriptions this provider reads. Defaults to the harness's logins.
+    var key: UsageProviderKey { get }
     func fetch(_ subscription: Subscription, context: UsageFetchContext) async -> UsageReport
+}
+
+extension UsageProvider {
+    public var key: UsageProviderKey { .harness(harness) }
+}
+
+public enum UsageProviderKey: Hashable, Sendable {
+    case harness(Harness)
+    case api(APIProvider)
 }
 
 public struct UsageFetchContext: Sendable {

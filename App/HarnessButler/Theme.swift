@@ -107,6 +107,22 @@ enum Format {
         return delta > 0 ? "\(delta)% ahead" : "\(-delta)% behind"
     }
 
+    /// "$12.40", "$412.00", "$1,240" (no cents from $1,000).
+    static func dollars(_ amount: Double, currency: String = "USD") -> String {
+        amount.formatted(.currency(code: currency).precision(.fractionLength(abs(amount) >= 1000 ? 0 : 2)))
+    }
+
+    /// Menubar-short: "$4.20", "$412", "$1.2k", "$12k".
+    static func compactDollars(_ amount: Double, currency: String = "USD") -> String {
+        let symbol = currency == "USD" ? "$" : currency + " "
+        switch abs(amount) {
+        case ..<10: return symbol + String(format: "%.2f", amount)
+        case ..<1000: return symbol + String(Int(amount.rounded()))
+        case ..<10_000: return symbol + String(format: "%.1fk", amount / 1000)
+        default: return symbol + String(Int((amount / 1000).rounded())) + "k"
+        }
+    }
+
     static func money(_ minor: Int, exponent: Int, currency: String) -> String {
         let value = Decimal(minor) / pow(10, exponent)
         return value.formatted(.currency(code: currency).precision(.fractionLength(exponent)))

@@ -92,7 +92,7 @@ public struct ConfigProfile: Hashable, Sendable, Identifiable {
     public static func profiles(for subscriptions: [Subscription], homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> [ConfigProfile] {
         var result: [ConfigProfile] = []
         for harness in Harness.allCases {
-            for subscription in subscriptions where subscription.harness == harness {
+            for subscription in subscriptions where subscription.harness == harness && subscription.isHarnessLogin {
                 let home = subscription.homeURL(homeDirectory: homeDirectory).standardizedFileURL
                 if let index = result.firstIndex(where: { $0.harness == harness && $0.home == home }) {
                     result[index].subscriptionNames.append(subscription.name)

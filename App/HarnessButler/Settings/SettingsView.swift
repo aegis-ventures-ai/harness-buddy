@@ -168,7 +168,7 @@ private struct SubscriptionSettingsRow: View {
                     Text(subscription.name).font(.body.weight(.medium))
                         .onTapGesture(count: 2) { startRename() }
                 }
-                Text("\(subscription.harness.displayName) · \(subscription.sourceDescription())")
+                Text("\(subscription.kindName) · \(subscription.sourceDescription())")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -179,6 +179,9 @@ private struct SubscriptionSettingsRow: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .textSelection(.enabled)
+                }
+                if subscription.api != nil {
+                    APISubscriptionControls(store: store, subscription: subscription)
                 }
             }
             Spacer()
@@ -210,40 +213,169 @@ private struct SubscriptionSettingsRow: View {
     }
 }
 
+/// U-7: budget and key for an API subscription, under its name in the list.
+private struct APISubscriptionControls: View {
+    let store: UsageStore
+    let subscription: Subscription
+    @State private var budgetText = ""
+    @State private var isReplacingKey = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Monthly budget").font(.caption).foregroundStyle(.secondary)
+            TextField("Budget", text: $budgetText, prompt: Text("none"))
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .frame(width: 80)
+                .onSubmit(commitBudget)
+                .help("USD per UTC calendar month. Leave empty for no budget.")
+            Text(BudgetInput.isValid(budgetText) ? "USD" : "Enter an amount like 250")
+                .font(.caption)
+                .foregroundStyle(BudgetInput.isValid(budgetText) ? Color.secondary : Color.red)
+            Button("Replace Key…") { isReplacingKey = true }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+        }
+        .onAppear { budgetText = BudgetInput.text(subscription.api?.monthlyBudget) }
+        .onChange(of: subscription.api?.monthlyBudget) { _, new in budgetText = BudgetInput.text(new) }
+        // Commit when focus leaves the field, too.
+        .onDisappear(perform: commitBudget)
+        .sheet(isPresented: $isReplacingKey) {
+            ReplaceKeySheet(store: store, subscription: subscription)
+        }
+    }
+
+    private func commitBudget() {
+        guard BudgetInput.isValid(budgetText) else { return }
+        let budget = BudgetInput.value(budgetText)
+        if budget != subscription.api?.monthlyBudget { store.setBudget(subscription.id, budget) }
+    }
+}
+
+enum BudgetInput {
+    static func value(_ text: String) -> Double? {
+        let cleaned = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")
+        guard let value = Double(cleaned), value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    static func isValid(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespaces).isEmpty || value(text) != nil
+    }
+
+    static func text(_ budget: Double?) -> String {
+        guard let budget else { return "" }
+        return budget == budget.rounded() ? String(Int(budget)) : String(format: "%.2f", budget)
+    }
+}
+
+private struct ReplaceKeySheet: View {
+    let store: UsageStore
+    let subscription: Subscription
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            SecureField("Admin key", text: $key, prompt: Text(subscription.api?.provider.keyPrefix ?? ""))
+            Text(subscription.api?.provider.keyHelp ?? "").font(.caption).foregroundStyle(.secondary)
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    error = store.replaceKey(subscription.id, with: key)
+                    if error == nil { dismiss() }
+                }
+                .disabled(key.isEmpty)
+            }
+        }
+    }
+}
+
 private struct AddSubscriptionSheet: View {
+    enum Kind: String, CaseIterable, Identifiable {
+        case harness = "Harness login"
+        case api = "API spend"
+        var id: String { rawValue }
+    }
+
     let store: UsageStore
     @Environment(\.dismiss) private var dismiss
+    @State private var kind = Kind.harness
     @State private var harness: Harness = .claude
+    @State private var provider: APIProvider = .anthropic
     @State private var name = Harness.claude.displayName
     @State private var nameEdited = false
     @State private var homeOverride = ""
+    @State private var key = ""
+    @State private var budgetText = ""
+    @State private var addError: String?
+
+    private var suggestedName: String { kind == .api ? provider.displayName : harness.displayName }
 
     var body: some View {
         let error = SubscriptionNames.validate(name, among: store.subscriptions)
         Form {
-            Picker("Harness", selection: $harness) {
-                ForEach(Harness.allCases) { Text($0.displayName).tag($0) }
+            Picker("Kind", selection: $kind) {
+                ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
             }
-            .onChange(of: harness) { _, new in
-                if !nameEdited { name = SubscriptionNames.unique(new.displayName, among: store.subscriptions) }
+            .pickerStyle(.segmented)
+            if kind == .harness {
+                Picker("Harness", selection: $harness) {
+                    ForEach(Harness.allCases) { Text($0.displayName).tag($0) }
+                }
+            } else {
+                Picker("Provider", selection: $provider) {
+                    ForEach(APIProvider.allCases) { Text($0.displayName).tag($0) }
+                }
             }
             TextField("Name", text: Binding(get: { name }, set: { name = $0; nameEdited = true }))
             if let error { Text(error.message).font(.caption).foregroundStyle(.red) }
-            TextField(harness.homeEnvironmentVariable, text: $homeOverride, prompt: Text("Leave empty for \(defaultHome)"))
-            Text("Enter the value exactly as your shell exports \(harness.homeEnvironmentVariable). Each value is a separate login.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if kind == .harness {
+                TextField(harness.homeEnvironmentVariable, text: $homeOverride, prompt: Text("Leave empty for \(defaultHome)"))
+                Text("Enter the value exactly as your shell exports \(harness.homeEnvironmentVariable). Each value is a separate login.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                SecureField("Admin key", text: $key, prompt: Text(provider.keyPrefix + "…"))
+                Text(provider.keyHelp + " The key is stored in your login Keychain and only sent to \(provider == .anthropic ? "api.anthropic.com" : "api.openai.com").")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Monthly budget (USD)", text: $budgetText, prompt: Text("optional"))
+                if !BudgetInput.isValid(budgetText) {
+                    Text("Enter an amount like 250, or leave it empty.").font(.caption).foregroundStyle(.red)
+                }
+                Text("Spend is read every 30 minutes; providers report it with a delay of a few hours. Grok Build has no admin API, so it's tracked through its login only.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let addError { Text(addError).font(.caption).foregroundStyle(.red) }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .onAppear { name = SubscriptionNames.unique(harness.displayName, among: store.subscriptions) }
+        .frame(width: 480)
+        .onAppear { name = SubscriptionNames.unique(suggestedName, among: store.subscriptions) }
+        .onChange(of: suggestedName) { _, new in
+            if !nameEdited { name = SubscriptionNames.unique(new, among: store.subscriptions) }
+        }
+        .onChange(of: kind) { addError = nil }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Add") {
-                    if store.add(name: name, harness: harness, homeOverride: homeOverride) == nil { dismiss() }
+                    switch kind {
+                    case .harness:
+                        if store.add(name: name, harness: harness, homeOverride: homeOverride) == nil { dismiss() }
+                    case .api:
+                        addError = store.addAPI(name: name, provider: provider, key: key, monthlyBudget: BudgetInput.value(budgetText))
+                        if addError == nil { dismiss() }
+                    }
                 }
-                .disabled(error != nil)
+                .disabled(error != nil || (kind == .api && (key.isEmpty || !BudgetInput.isValid(budgetText))))
             }
         }
     }
