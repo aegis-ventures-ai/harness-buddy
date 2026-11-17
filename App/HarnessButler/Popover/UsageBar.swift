@@ -14,7 +14,7 @@ struct UsageBar: View {
         GeometryReader { geometry in
             let gap: CGFloat = 2
             let width = (geometry.size.width - gap * CGFloat(segments - 1)) / CGFloat(segments)
-            let filled = Int((remainingPercent / 100 * Double(segments)).rounded())
+            let filled = (remainingPercent / 100 * Double(segments)).rounded().displayInt
             ZStack(alignment: .leading) {
                 HStack(spacing: gap) {
                     ForEach(0..<segments, id: \.self) { index in

@@ -80,7 +80,7 @@ extension NSColor {
 enum Format {
     /// "38m", "1h 12m", "3d 3h".
     static func duration(_ interval: TimeInterval) -> String {
-        let minutes = max(0, Int(interval / 60))
+        let minutes = max(0, (interval / 60).displayInt)
         if minutes < 60 { return "\(minutes)m" }
         let hours = minutes / 60
         if hours < 24 { return minutes % 60 == 0 ? "\(hours)h" : "\(hours)h \(minutes % 60)m" }
@@ -104,11 +104,11 @@ enum Format {
         return seconds < 60 ? "just now" : "\(duration(seconds)) old"
     }
 
-    static func percent(_ value: Double) -> String { "\(Int(value.rounded()))%" }
+    static func percent(_ value: Double) -> String { "\(value.rounded().displayInt)%" }
 
     /// "12% ahead" (bad) / "39% behind" (good) / "on pace".
     static func pace(_ pace: Pace) -> String {
-        let delta = Int(pace.deltaPercent.rounded())
+        let delta = pace.deltaPercent.rounded().displayInt
         if delta == 0 { return "on pace" }
         return delta > 0 ? "\(delta)% ahead" : "\(-delta)% behind"
     }
@@ -123,9 +123,9 @@ enum Format {
         let symbol = currency == "USD" ? "$" : currency + " "
         switch abs(amount) {
         case ..<10: return symbol + String(format: "%.2f", amount)
-        case ..<1000: return symbol + String(Int(amount.rounded()))
+        case ..<1000: return symbol + String(amount.rounded().displayInt)
         case ..<10_000: return symbol + String(format: "%.1fk", amount / 1000)
-        default: return symbol + String(Int((amount / 1000).rounded())) + "k"
+        default: return symbol + String((amount / 1000).rounded().displayInt) + "k"
         }
     }
 

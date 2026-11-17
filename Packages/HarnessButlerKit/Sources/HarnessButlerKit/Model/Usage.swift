@@ -15,9 +15,27 @@ public struct UsageWindow: Codable, Hashable, Sendable, Identifiable {
     public init(id: String, label: String, usedPercent: Double, resetsAt: Date?, duration: TimeInterval?) {
         self.id = id
         self.label = label
-        self.usedPercent = usedPercent
+        self.usedPercent = Self.bounded(usedPercent)
         self.resetsAt = resetsAt
         self.duration = duration
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, label, usedPercent, resetsAt, duration }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(String.self, forKey: .id), label: try c.decode(String.self, forKey: .label),
+                  usedPercent: try c.decode(Double.self, forKey: .usedPercent),
+                  resetsAt: try c.decodeIfPresent(Date.self, forKey: .resetsAt),
+                  duration: try c.decodeIfPresent(TimeInterval.self, forKey: .duration))
+    }
+
+    /// The most a window can report as used (a budget can be far over, but not without limit).
+    public static let maxUsedPercent: Double = 1_000_000
+
+    /// Finite and within 0...maxUsedPercent, whatever a provider or a typed budget produced.
+    static func bounded(_ percent: Double) -> Double {
+        percent.isNaN ? 0 : min(max(percent, 0), maxUsedPercent)
     }
 
     public var remainingPercent: Double { max(0, 100 - usedPercent) }

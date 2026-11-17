@@ -94,6 +94,19 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(snapshot.applyingBudget(nil).windows.isEmpty)
         #expect(UsageRules.status(of: snapshot.applyingBudget(150), at: now) == .limited)
         #expect(snapshot.applyingBudget(0).windows.isEmpty)
+        // A tiny budget is far over, but bounded: percent and pace stay finite and displayable.
+        let tiny = try! #require(snapshot.applyingBudget(1e-20).windows.first)
+        #expect(tiny.usedPercent == UsageWindow.maxUsedPercent)
+        let pace = try! #require(UsageRules.pace(of: tiny, at: now))
+        #expect(pace.deltaPercent.isFinite && pace.projectedUsedPercent <= UsageWindow.maxUsedPercent)
+        #expect(UsageWindow(id: "x", label: "x", usedPercent: .nan, resetsAt: nil, duration: nil).usedPercent == 0)
+        #expect(UsageWindow(id: "x", label: "x", usedPercent: -40, resetsAt: nil, duration: nil).usedPercent == 0)
+        #expect(Double.infinity.displayInt == 1_000_000_000_000_000 && Double.nan.displayInt == 0 && (-1e300).displayInt == -1_000_000_000_000_000)
+    }
+
+    @Test func cachedWindowsAreBoundedToo() throws {
+        let json = #"{"id":"x","label":"x","usedPercent":1e300}"#
+        #expect(try JSONDecoder().decode(UsageWindow.self, from: Data(json.utf8)).usedPercent == UsageWindow.maxUsedPercent)
     }
 
     @Test func oldSubscriptionJSONStillDecodes() throws {
@@ -220,6 +233,14 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(RetryAfter.parse("Mon, 16 Nov 2026 11:00:00 GMT", now: now) == 0)
         #expect(RetryAfter.parse("soon", now: now) == nil)
         #expect(RetryAfter.parse(nil, now: now) == nil)
+        // Only digits are delay seconds, and a provider can't silence us for more than a day.
+        #expect(RetryAfter.parse("inf", now: now) == nil)
+        #expect(RetryAfter.parse("1e300", now: now) == nil)
+        #expect(RetryAfter.parse("-5", now: now) == nil)
+        #expect(RetryAfter.parse("31536000", now: now) == RetryAfter.maximum)
+        #expect(RetryAfter.parse("999999999999999999999999", now: now) == RetryAfter.maximum)
+        #expect(RetryAfter.parse("Fri, 16 Nov 2029 12:00:00 GMT", now: now) == RetryAfter.maximum)
+        #expect(AnthropicAdminUsageProvider.number("1e400") == nil && AnthropicAdminUsageProvider.number(Double.nan) == nil)
     }
 
     @Test func expiredCursorRestartsOnce() async {
@@ -371,6 +392,10 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(store.usage(for: id).snapshot?.windows.first?.usedPercent == 50)
         #expect(store.subscriptions.first?.api?.monthlyBudget == 80)
         store.setBudget(id, -5)
+        #expect(store.subscriptions.first?.api?.monthlyBudget == nil)
+        store.setBudget(id, 1e-20)
+        #expect(store.subscriptions.first?.api?.monthlyBudget == nil)
+        store.setBudget(id, 1e20)
         #expect(store.subscriptions.first?.api?.monthlyBudget == nil)
         #expect(store.usage(for: id).snapshot?.windows.isEmpty == true)
     }

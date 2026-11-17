@@ -148,7 +148,8 @@ public final class UsageStore {
         // Failing subscriptions keep their back-off step and any provider-imposed quiet period.
         for (id, record) in cacheFile.loadRetries() where subscriptions.contains(where: { $0.id == id }) {
             var entry = usage[id, default: SubscriptionUsage()]
-            let blocked = record.blockedUntil.flatMap { $0 > now ? $0 : nil }
+            // Capped, so a bad value saved by an older build can't block reads for long.
+            let blocked = record.blockedUntil.flatMap { $0 > now ? min($0, now.addingTimeInterval(RetryAfter.maximum)) : nil }
             guard record.lastAttempt >= (entry.refresh.lastAttempt ?? .distantPast) || blocked != nil else { continue }
             if record.lastAttempt <= now { entry.refresh.lastAttempt = max(record.lastAttempt, entry.refresh.lastAttempt ?? .distantPast) }
             entry.refresh.consecutiveFailures = record.failures
@@ -330,8 +331,11 @@ public final class UsageStore {
         }
     }
 
+    /// Budgets from one cent to a trillion: outside that, percentages and pace stop meaning anything.
+    public static let budgetRange: ClosedRange<Double> = 0.01...1e12
+
     static func validBudget(_ budget: Double?) -> Double? {
-        guard let budget, budget.isFinite, budget > 0 else { return nil }
+        guard let budget, budget.isFinite, budgetRange.contains(budget) else { return nil }
         return budget
     }
 

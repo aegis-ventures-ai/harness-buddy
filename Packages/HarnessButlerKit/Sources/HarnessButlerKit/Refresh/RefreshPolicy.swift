@@ -121,7 +121,7 @@ public enum RefreshPolicy {
         }
         if issue.shouldBackOff { state.consecutiveFailures += 1 }
         if let retryAfter = issue.retryAfter {
-            state.blockedUntil = now.addingTimeInterval(retryAfter)
+            state.blockedUntil = now.addingTimeInterval(min(max(0, retryAfter), RetryAfter.maximum))
         } else if case .rateLimited = issue {
             // No retry-after: hold off for the back-off step, and remember it across relaunches.
             state.blockedUntil = now.addingTimeInterval(backoff[min(state.consecutiveFailures, backoff.count) - 1])

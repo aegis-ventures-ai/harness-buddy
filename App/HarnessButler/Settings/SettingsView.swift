@@ -266,7 +266,7 @@ private struct APISubscriptionControls: View {
 enum BudgetInput {
     static func value(_ text: String) -> Double? {
         let cleaned = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: "")
-        guard let value = Double(cleaned), value.isFinite, value > 0 else { return nil }
+        guard let value = Double(cleaned), value.isFinite, UsageStore.budgetRange.contains(value) else { return nil }
         return value
     }
 

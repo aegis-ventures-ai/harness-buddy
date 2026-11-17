@@ -45,17 +45,34 @@ enum LenientJSON {
     static func array(_ value: Any?) -> [[String: Any]]? { value as? [[String: Any]] }
 }
 
-/// A `retry-after` header: delay seconds or an HTTP date (RFC 9110 §10.2.3).
-enum RetryAfter {
+/// A `retry-after` header: delay seconds or an HTTP date (RFC 9110 §10.2.3), capped at a day.
+public enum RetryAfter {
+    /// The longest quiet period we accept from a provider; more is treated as a day.
+    public static let maximum: TimeInterval = 24 * 3600
+
     static func parse(_ value: String?, now: Date = .now) -> TimeInterval? {
         guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
-        if let seconds = TimeInterval(value) { return max(0, seconds) }
+        // Delay seconds are digits only: "inf", "1e300" or "-5" aren't.
+        if value.allSatisfy(\.isASCIIDigit) {
+            return value.count > 6 ? maximum : min(TimeInterval(value) ?? maximum, maximum)
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "GMT")
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
         guard let date = formatter.date(from: value) else { return nil }
-        return max(0, date.timeIntervalSince(now))
+        return min(max(0, date.timeIntervalSince(now)), maximum)
+    }
+}
+
+private extension Character {
+    var isASCIIDigit: Bool { isASCII && isNumber }
+}
+
+extension Double {
+    /// `Int(self)` without the trap: NaN is 0, and the value saturates at ±1e15. For display.
+    public var displayInt: Int {
+        isNaN ? 0 : Int(min(max(self, -1e15), 1e15))
     }
 }
 

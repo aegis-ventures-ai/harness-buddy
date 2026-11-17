@@ -43,7 +43,7 @@ public struct UsageAlert: Hashable, Sendable {
             return ("\(subscriptionName) is limited", "The \(windowLabel) window is used up.\(resets)")
         case .threshold(let threshold):
             let shown = max(threshold, usedPercent.rounded(.down))
-            return ("\(subscriptionName): \(Int(shown))% of \(windowLabel) used", "\(Int(max(0, 100 - usedPercent).rounded()))% left.\(resets)")
+            return ("\(subscriptionName): \(shown.displayInt)% of \(windowLabel) used", "\(max(0, 100 - usedPercent).rounded().displayInt)% left.\(resets)")
         }
     }
 }

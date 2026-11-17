@@ -83,8 +83,8 @@ extension AdminSpendProvider {
     }
 
     static func number(_ value: Any?) -> Double? {
-        if let string = value as? String { return Double(string) }
-        return LenientJSON.double(value)
+        let number = (value as? String).map { Double($0) } ?? LenientJSON.double(value)
+        return number.flatMap { $0.isFinite && abs($0) < 1e15 ? $0 : nil }
     }
 
     /// The cursor for the next page. `has_more` without a cursor is malformed: stopping there would undercount.

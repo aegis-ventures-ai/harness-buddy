@@ -129,7 +129,7 @@ struct SubscriptionDetailView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(subscription.name), \(window.label), \(Int(window.remainingPercent.rounded())) percent left, \(Format.resets(window.resetsAt, now: now))")
+        .accessibilityLabel("\(subscription.name), \(window.label), \(window.remainingPercent.rounded().displayInt) percent left, \(Format.resets(window.resetsAt, now: now))")
     }
 
     @ViewBuilder
@@ -211,13 +211,13 @@ struct SubscriptionDetailView: View {
                 .chartYAxis {
                     AxisMarks(position: .trailing, values: .automatic(desiredCount: 2)) { value in
                         AxisGridLine()
-                        AxisValueLabel { if let percent = value.as(Double.self) { Text("\(Int(percent))%") } }
+                        AxisValueLabel { if let percent = value.as(Double.self) { Text("\(percent.displayInt)%") } }
                     }
                 }
                 .font(Theme.mono(9))
                 .frame(height: 64)
                 .accessibilityLabel("\(window.label) used per day over the last 7 days: "
-                    + days.map { "\($0.day.formatted(.dateTime.weekday(.wide))) \(Int($0.percent.rounded())) percent" }.joined(separator: ", "))
+                    + days.map { "\($0.day.formatted(.dateTime.weekday(.wide))) \($0.percent.rounded().displayInt) percent" }.joined(separator: ", "))
             }
         }
     }

@@ -33,7 +33,7 @@ public enum UsageRules {
         return Pace(
             elapsedFraction: elapsed,
             deltaPercent: window.usedPercent - elapsed * 100,
-            projectedUsedPercent: window.usedPercent / elapsed
+            projectedUsedPercent: min(window.usedPercent / elapsed, UsageWindow.maxUsedPercent)
         )
     }
 

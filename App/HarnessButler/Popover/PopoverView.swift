@@ -265,7 +265,7 @@ struct SubscriptionRow: View {
             return "\(subscription.name), \(Format.dollars(spend.monthToDate, currency: spend.currency)) spent this month, projected \(Format.dollars(spend.projectedMonthEnd(at: now), currency: spend.currency))"
         }
         guard let window else { return "\(subscription.name), no data yet" }
-        return "\(subscription.name), \(window.label), \(Int(window.remainingPercent.rounded())) percent left, \(Format.resets(window.resetsAt, now: now))"
+        return "\(subscription.name), \(window.label), \(window.remainingPercent.rounded().displayInt) percent left, \(Format.resets(window.resetsAt, now: now))"
     }
 }
 

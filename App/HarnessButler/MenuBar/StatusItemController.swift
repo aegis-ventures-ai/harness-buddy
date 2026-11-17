@@ -261,7 +261,7 @@ enum MenuBarTitle {
             }
             return true
         }
-        image.accessibilityDescription = "\(Int((remaining * 100).rounded())) percent left"
+        image.accessibilityDescription = "\((remaining * 100).rounded().displayInt) percent left"
         return image
     }
 
@@ -315,7 +315,7 @@ enum MenuBarTitle {
             }
             return true
         }
-        image.accessibilityDescription = bars.map { "\(Int(($0.remaining * 100).rounded())) percent left" }.joined(separator: ", ")
+        image.accessibilityDescription = bars.map { "\(($0.remaining * 100).rounded().displayInt) percent left" }.joined(separator: ", ")
         return image
     }
 
