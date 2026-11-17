@@ -47,6 +47,10 @@ public struct WriteResult: Sendable {
 /// link and the dotfiles copy is updated. (Foundation's `.atomic` write would
 /// replace the link with a regular file.) Hard links are broken by any
 /// rename-based write; that is accepted and detectable via `st_nlink > 1`.
+///
+/// Extended attributes and ACLs: a rename installs a new inode, so they are copied from the
+/// current file onto the temp file before the rename (owner and flags are not; the user owns
+/// these files, and an immutable file fails the rename instead).
 public struct SafeFileWriter: Sendable {
     public var backupDirectory: URL
     public init(backupDirectory: URL) { self.backupDirectory = backupDirectory }
@@ -91,6 +95,7 @@ public struct SafeFileWriter: Sendable {
                     off += n
                 }
             }
+            try Self.copyAttributes(from: target, to: fd)
             guard fchmod(fd, loaded.snapshot.mode) == 0 else { throw SafeWriteError.posix("fchmod", errno) }
             guard fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
         }
@@ -125,21 +130,31 @@ public struct SafeFileWriter: Sendable {
     /// at `lockPath` created with mkdir(2). Claude Code 2.1.x takes exactly this
     /// lock (`${configPath}.lock`) around its read-modify-write of `~/.claude.json`,
     /// so holding it closes the check-then-rename race with the CLI.
-    /// A lock older than `stale` seconds is treated as abandoned (proper-lockfile
-    /// refreshes the mtime of live locks; its default staleness is 10 s).
+    /// A lock older than `stale` seconds is treated as abandoned. Like proper-lockfile (default
+    /// staleness 10 s, refresh every 5 s), the lock's mtime is refreshed while `body` runs, so a
+    /// slow write is never mistaken for an abandoned lock by the CLI.
     public func withLock<T>(_ lockPath: String, timeout: TimeInterval = 5, stale: TimeInterval = 10,
-                            _ body: () throws -> T) throws -> T {
+                            refreshInterval: TimeInterval? = nil, _ body: () throws -> T) throws -> T {
         let deadline = Date().addingTimeInterval(timeout)
         while mkdir(lockPath, 0o755) != 0 {
             guard errno == EEXIST else { throw SafeWriteError.posix("mkdir lock", errno) }
             var st = stat()
-            if stat(lockPath, &st) == 0, Date().timeIntervalSince1970 - Double(st.st_mtimespec.tv_sec) > stale {
+            if stat(lockPath, &st) == 0,
+               Date().timeIntervalSince1970 - (Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9) > stale {
                 rmdir(lockPath); continue
             }
             guard Date() < deadline else { throw SafeWriteError.lockTimeout }
             usleep(50_000)
         }
-        defer { rmdir(lockPath) }
+        let refresh = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        let interval = refreshInterval ?? stale / 2
+        refresh.schedule(deadline: .now() + interval, repeating: interval)
+        refresh.setEventHandler { utimes(lockPath, nil) }
+        refresh.resume()
+        defer {
+            refresh.cancel()
+            rmdir(lockPath)
+        }
         return try body()
     }
 
@@ -158,6 +173,16 @@ public struct SafeFileWriter: Sendable {
         let ok = loaded.bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count }
         guard ok, fsync(fd) == 0 else { throw SafeWriteError.posix("write backup", errno) }
         return path
+    }
+
+    /// Copy extended attributes and the ACL of `path` onto the open file `fd`.
+    static func copyAttributes(from path: String, to fd: Int32) throws {
+        let source = open(path, O_RDONLY)
+        guard source >= 0 else { throw SafeWriteError.posix("open for attributes", errno) }
+        defer { close(source) }
+        guard fcopyfile(source, fd, nil, copyfile_flags_t(COPYFILE_XATTR | COPYFILE_ACL)) == 0 || errno == ENOTSUP else {
+            throw SafeWriteError.posix("copy attributes", errno)
+        }
     }
 
     static func realpath(_ path: String) throws -> String {

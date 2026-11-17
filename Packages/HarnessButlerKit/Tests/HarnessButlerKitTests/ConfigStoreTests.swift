@@ -329,3 +329,28 @@ private func mode(_ path: String) throws -> Int {
         #expect(store.list(for: ref).count == 1)
     }
 }
+
+@Suite struct InlineTableEditTests {
+    @Test func editsInsideInlineTableRewriteOnlyThatValue() throws {
+        var document = try ConfigDocument(format: .toml, bytes: Array("""
+        # keep me
+        [mcp_servers.docs]
+        command = "npx"   # trailing
+        env = { A = "1", 'B C' = "2" }
+        """.utf8))
+        try document.apply([.set(["mcp_servers", "docs", "env", "D"], .string("4")), .remove(["mcp_servers", "docs", "env", "A"])])
+        #expect(document.text == """
+        # keep me
+        [mcp_servers.docs]
+        command = "npx"   # trailing
+        env = { "B C" = "2", D = "4" }
+        """)
+    }
+
+    @Test func refusesLossyInlineRewrite() throws {
+        let source = "t = { when = 1979-05-27T07:32:00Z, a = 1 }\n"
+        var document = try ConfigDocument(format: .toml, bytes: Array(source.utf8))
+        #expect(throws: ConfigEditError.self) { try document.apply(.set(["t", "a"], .integer(2))) }
+        #expect(document.text == source)
+    }
+}

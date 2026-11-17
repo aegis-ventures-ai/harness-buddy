@@ -41,6 +41,48 @@ struct Sandbox {
         #expect(try sb.leftovers().isEmpty)
     }
 
+    /// The rename installs a new inode; extended attributes and ACLs come along.
+    @Test func extendedAttributesAndACLSurviveTheWrite() throws {
+        let sb = try Sandbox()
+        let p = try sb.file("config.toml", Fixtures.grok)
+        let tag = Array("hb-test".utf8)
+        #expect(setxattr(p, "com.example.hb-test", tag, tag.count, 0, 0) == 0)
+        let acl = Process()
+        acl.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        acl.arguments = ["+a", "everyone allow readattr", p]
+        try acl.run(); acl.waitUntilExit()
+        #expect(acl.terminationStatus == 0)
+
+        let loaded = try sb.writer.load(p)
+        var doc = try TOMLDocument(bytes: loaded.bytes)
+        try doc.set(["cli", "auto_update"], to: false)
+        try sb.writer.write(doc.bytes, over: loaded)
+
+        var buffer = [UInt8](repeating: 0, count: 64)
+        let length = getxattr(p, "com.example.hb-test", &buffer, buffer.count, 0, 0)
+        #expect(length == tag.count && Array(buffer.prefix(max(length, 0))) == tag)
+        let hasACL = acl_get_file(p, ACL_TYPE_EXTENDED).map { acl_free(UnsafeMutableRawPointer($0)); return true } ?? false
+        #expect(hasACL)
+        #expect(sb.read(p) == doc.text)
+    }
+
+    /// While the lock is held its mtime is refreshed, so another proper-lockfile user never
+    /// treats a slow write as an abandoned lock.
+    @Test func heldLockIsRefreshedAndNotStolen() throws {
+        let sb = try Sandbox()
+        let lock = sb.dir.appendingPathComponent("x.json.lock").path
+        try sb.writer.withLock(lock, stale: 0.6, refreshInterval: 0.1) {
+            usleep(900_000)
+            var st = stat()
+            #expect(stat(lock, &st) == 0)
+            #expect(Date().timeIntervalSince1970 - Double(st.st_mtimespec.tv_sec) - Double(st.st_mtimespec.tv_nsec) / 1e9 < 0.5)
+            #expect(throws: SafeWriteError.lockTimeout) {
+                try sb.writer.withLock(lock, timeout: 0.3, stale: 0.6) {}
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: lock))
+    }
+
     @Test func externalChangeBlocksTheWrite() throws {
         let sb = try Sandbox()
         let p = try sb.file("settings.json", Fixtures.claudeSettings)

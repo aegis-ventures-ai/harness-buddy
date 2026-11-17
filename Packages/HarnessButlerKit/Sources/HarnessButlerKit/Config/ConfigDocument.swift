@@ -81,8 +81,29 @@ public enum ConfigFormat: String, Sendable {
 
 public struct ConfigEditError: Error, CustomStringConvertible, Equatable, Sendable {
     public var message: String
-    public init(_ message: String) { self.message = message }
-    public var description: String { message }
+    /// 1-based position of a syntax error, when known.
+    public var line: Int?
+    public var column: Int?
+
+    public init(_ message: String, line: Int? = nil, column: Int? = nil) {
+        self.message = message
+        self.line = line
+        self.column = column
+    }
+
+    /// `offset` is a byte offset into `bytes`; the column counts characters, not bytes.
+    init(_ message: String, offset: Int?, in bytes: [UInt8]) {
+        guard let offset, offset <= bytes.count else { self.init(message); return }
+        let lineStart = bytes[..<offset].lastIndex(of: 0x0A).map { $0 + 1 } ?? 0
+        let line = bytes[..<lineStart].count(where: { $0 == 0x0A }) + 1
+        let column = String(decoding: bytes[lineStart..<offset], as: UTF8.self).count + 1
+        self.init(message, line: line, column: column)
+    }
+
+    public var description: String {
+        guard let line else { return message }
+        return message + " (line \(line)" + (column.map { ", column \($0)" } ?? "") + ")"
+    }
 }
 
 /// A JSON or TOML config file held as bytes and edited in place (comments, order and unknown keys survive).
@@ -102,9 +123,11 @@ public struct ConfigDocument: Sendable {
         switch format {
         case .json:
             do { storage = .json(try JSONDocument(bytes: blank ? Array("{}\n".utf8) : bytes)) }
+            catch let error as JSONEditError { throw ConfigEditError("Not valid JSON: \(error.message)", offset: error.offset, in: bytes) }
             catch { throw ConfigEditError("Not valid JSON: \(error)") }
         case .toml:
-            do { storage = .toml(try TOMLDocument(bytes: blank ? [] : bytes)) }
+            do { storage = .toml(try TOMLDocument(bytes: bytes)) }
+            catch let error as TOMLEditError { throw ConfigEditError("Not valid TOML 1.0: \(error.message)", offset: error.offset, in: bytes) }
             catch { throw ConfigEditError("Not valid TOML 1.0: \(error)") }
         }
     }
@@ -153,6 +176,9 @@ public struct ConfigDocument: Sendable {
             guard value(at: path) != nil else { return }
             try wrap { try document.remove(path) }
             storage = .json(document)
+        case (.toml(var document), _) where (try? document.inlineTableKey(containing: operation.path)) != nil:
+            try editInsideInlineTable(&document, operation)
+            storage = .toml(document)
         case (.toml(var document), .set(let path, let value)):
             try wrap { try document.set(path, to: TOMLValue(value)) }
             storage = .toml(document)
@@ -170,10 +196,68 @@ public struct ConfigDocument: Sendable {
         self = copy
     }
 
+    /// TOML 1.0 inline tables are a single line, so an edit inside one rewrites the whole
+    /// `key = { … }` value. Only done when that rewrite loses nothing (dates, spelling aside).
+    private func editInsideInlineTable(_ document: inout TOMLDocument, _ operation: ConfigOperation) throws {
+        guard let key = try document.inlineTableKey(containing: operation.path), let current = value(at: key) else { return }
+        if case .remove = operation, value(at: operation.path) == nil { return }
+        let relative = Array(operation.path.dropFirst(key.count))
+        let updated = current.applying(relative.isEmpty ? operation : {
+            switch operation {
+            case .set(_, let value): .set(relative, value)
+            case .remove: .remove(relative)
+            }
+        }())
+        try wrap {
+            var probe = document
+            try probe.set(key, to: TOMLValue(current))
+            let before = NSDictionary(dictionary: try [String: Any](document.parsed()))
+            guard before.isEqual(to: try [String: Any](probe.parsed())) else {
+                throw ConfigEditError("Can't edit inside the inline table \(key.joined(separator: ".")) without changing other values")
+            }
+            try document.set(key, to: TOMLValue(updated))
+        }
+    }
+
     private func wrap(_ body: () throws -> Void) throws {
         do { try body() } catch let error as ConfigEditError { throw error } catch {
             throw ConfigEditError("Couldn't apply the change safely: \(error)")
         }
+    }
+}
+
+// MARK: - Model edits
+
+extension ConfigValue {
+    /// The value with `operation` applied, as the file should read afterwards.
+    func applying(_ operation: ConfigOperation) -> ConfigValue {
+        switch operation {
+        case .set(let path, let value): setting(path, to: value)
+        case .remove(let path): removing(path)
+        }
+    }
+
+    /// `path` set to `value`, creating missing tables (and replacing non-tables on the way).
+    func setting(_ path: [String], to value: ConfigValue) -> ConfigValue {
+        guard let key = path.first else { return value }
+        var pairs = table ?? [:]
+        let rest = Array(path.dropFirst())
+        if let index = pairs.pairs.firstIndex(where: { $0.key == key }) {
+            pairs.pairs[index].value = pairs.pairs[index].value.setting(rest, to: value)
+        } else {
+            pairs.pairs.append(.init(key: key, value: ConfigValue.table([:]).setting(rest, to: value)))
+        }
+        return .table(pairs)
+    }
+
+    func removing(_ path: [String]) -> ConfigValue {
+        guard let key = path.first, case .table(var pairs) = self else { return self }
+        if path.count == 1 {
+            pairs.pairs.removeAll { $0.key == key }
+        } else if let index = pairs.pairs.firstIndex(where: { $0.key == key }) {
+            pairs.pairs[index].value = pairs.pairs[index].value.removing(Array(path.dropFirst()))
+        }
+        return .table(pairs)
     }
 }
 

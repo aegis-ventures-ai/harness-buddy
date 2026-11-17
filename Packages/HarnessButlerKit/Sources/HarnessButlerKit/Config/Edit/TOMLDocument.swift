@@ -15,9 +15,9 @@ public struct TOMLDocument: Sendable {
     private var newline: String
 
     public init(bytes: [UInt8]) throws {
+        newline = try TOMLScanner.scan(bytes).newline   // first: it bounds nesting depth for the parser
         try Self.validate(bytes)
         self.bytes = bytes
-        newline = try TOMLScanner.scan(bytes).newline
     }
 
     public init(_ text: String) throws { try self.init(bytes: Array(text.utf8)) }
@@ -28,8 +28,10 @@ public struct TOMLDocument: Sendable {
     public func parsed() throws -> TOMLTable { try TOMLTable(source: bytes) }
 
     static func validate(_ bytes: [UInt8]) throws {
-        do { _ = try TOMLTable(source: bytes) } catch {
-            throw TOMLEditError("not valid TOML: \(error)")
+        // TOMLDecoder parses scalars lazily; converting the whole table forces every value to be checked.
+        do { _ = try [String: Any](TOMLTable(source: bytes)) } catch {
+            // TOMLDecoder reports "(Line 3) Ill-formed key."; keep its wording.
+            throw TOMLEditError("\(error)")
         }
     }
 
@@ -45,10 +47,26 @@ public struct TOMLDocument: Sendable {
         precondition(!path.isEmpty)
         let sections = try TOMLScanner.scan(bytes).sections
 
-        if case .table(let t) = value, let range = tableBlockRange(path, in: sections, keepAttachedComments: true) {
-            let start = range.lowerBound, end = range.upperBound
-            let trailing = end < bytes.count ? newline : ""  // keep the blank line before the next table
-            return try splice(start..<end, with: TOMLRender.tableSections(path: path, t, newline: newline) + trailing)
+        if case .table(let t) = value, sections.contains(where: { $0.kind == .table && $0.path == path }) {
+            // Replace the first block in place (keeping the comments above it) and drop the rest.
+            var ranges = ownedRanges(path, in: sections)
+            if let first = sections.first(where: { $0.kind != .root && $0.path.starts(with: path) }), ranges[0].lowerBound == first.ownedStart {
+                ranges[0] = first.header!.lowerBound..<ranges[0].upperBound
+            }
+            let trailing = ranges[0].upperBound < bytes.count ? newline : ""  // keep the blank line before the next table
+            let replacement = [(ranges[0], TOMLRender.tableSections(path: path, t, newline: newline) + trailing)]
+            return try splice(replacement + ranges.dropFirst().map { ($0, "") })
+        }
+
+        // Something else lives under `path` (sub-tables, dotted keys): the new value replaces all of it.
+        let nested = sections.contains { $0.kind != .root && $0.path.starts(with: path) }
+            || sections.contains { s in s.entries.contains { (s.path + $0.key).count > path.count && (s.path + $0.key).starts(with: path) } }
+        if nested {
+            var copy = self
+            try copy.removeTable(path)
+            try copy.set(path, to: value)
+            self = copy
+            return
         }
 
         if let (section, entry) = find(path, in: sections) {
@@ -74,22 +92,33 @@ public struct TOMLDocument: Sendable {
         try splice(entry.line, with: "")
     }
 
-    /// Removes `[path]`, all of its sub-tables (`[path.*]`), and the comment lines
-    /// directly attached above each header. The sub-tables must follow the table
-    /// contiguously (the normal layout); otherwise this throws.
+    /// Removes `[path]`, all of its sub-tables (`[path.*]`, wherever they are), dotted keys under
+    /// `path` in other tables, and the comment lines directly attached above each removed header.
     public mutating func removeTable(_ path: [String]) throws {
         let sections = try TOMLScanner.scan(bytes).sections
-        guard var range = tableBlockRange(path, in: sections) else { throw TOMLEditError("no such table: \(path)") }
-        if range.upperBound == bytes.count {
+        var ranges = ownedRanges(path, in: sections)
+        guard !ranges.isEmpty else { throw TOMLEditError("no such table: \(path)") }
+        if let last = ranges.last, last.upperBound == bytes.count {
             // Last block in the file: also drop the blank lines that separated it.
-            var s = range.lowerBound
+            var s = last.lowerBound
             func endsWithBlankLine(_ s: Int) -> Bool {   // bytes[..<s] ends "\n\n" or "\n\r\n"
                 s >= 2 && bytes[s - 1] == 0x0A && (bytes[s - 2] == 0x0A || (s >= 3 && bytes[s - 2] == 0x0D && bytes[s - 3] == 0x0A))
             }
             while endsWithBlankLine(s) { s -= bytes[s - 2] == 0x0D ? 2 : 1 }
-            range = s..<range.upperBound
+            ranges[ranges.count - 1] = s..<last.upperBound
         }
-        try splice(range, with: "")
+        try splice(ranges.map { ($0, "") })
+    }
+
+    /// The full key of an entry whose inline-table value (`key = { … }`) contains `path`.
+    func inlineTableKey(containing path: [String]) throws -> [String]? {
+        for section in try TOMLScanner.scan(bytes).sections where section.kind != .arrayOfTables {
+            for entry in section.entries {
+                let full = section.path + entry.key
+                if full.count < path.count, path.starts(with: full), bytes[entry.value.lowerBound] == UInt8(ascii: "{") { return full }
+            }
+        }
+        return nil
     }
 
     // MARK: internals
@@ -99,15 +128,28 @@ public struct TOMLDocument: Sendable {
         return nil
     }
 
-    /// Byte range of `[path]` plus its contiguous `[path.*]` sub-tables, from the first
-    /// header's attached comments up to the next unrelated section's attached comments.
-    private func tableBlockRange(_ path: [String], in sections: [TOMLSection], keepAttachedComments: Bool = false) -> Range<Int>? {
-        guard let idx = sections.firstIndex(where: { $0.kind == .table && $0.path == path }) else { return nil }
-        var j = idx + 1
-        while j < sections.count, sections[j].path.starts(with: path) { j += 1 }
-        let end = j < sections.count ? sections[j].ownedStart : bytes.count
-        let start = keepAttachedComments ? sections[idx].header!.lowerBound : sections[idx].ownedStart
-        return start..<end
+    /// Every byte range that defines something under `path`: each `[path]` / `[path.*]` /
+    /// `[[path.*]]` section (from its attached comments to the next section's), and each entry line
+    /// elsewhere whose dotted key lands under `path`. Sorted, adjacent ranges merged.
+    private func ownedRanges(_ path: [String], in sections: [TOMLSection]) -> [Range<Int>] {
+        var ranges: [Range<Int>] = []
+        for (index, section) in sections.enumerated() {
+            if section.kind != .root, section.path.starts(with: path) {
+                let end = index + 1 < sections.count ? sections[index + 1].ownedStart : bytes.count
+                ranges.append(section.ownedStart..<end)
+            } else {
+                for entry in section.entries where (section.path + entry.key).starts(with: path) { ranges.append(entry.line) }
+            }
+        }
+        var merged: [Range<Int>] = []
+        for range in ranges.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+            if let last = merged.last, range.lowerBound <= last.upperBound {
+                merged[merged.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
     }
 
     private mutating func insertEntry(_ key: String, _ value: TOMLValue, into section: TOMLSection, sections: [TOMLSection]) throws {
@@ -137,8 +179,15 @@ public struct TOMLDocument: Sendable {
     }
 
     private mutating func splice(_ range: Range<Int>, with text: String) throws {
+        try splice([(range, text)])
+    }
+
+    /// Replace non-overlapping ranges in one validated step.
+    private mutating func splice(_ edits: [(Range<Int>, String)]) throws {
         var next = bytes
-        next.replaceSubrange(range, with: Array(text.utf8))
+        for (range, text) in edits.sorted(by: { $0.0.lowerBound > $1.0.lowerBound }) {
+            next.replaceSubrange(range, with: Array(text.utf8))
+        }
         try Self.validate(next)
         bytes = next
     }

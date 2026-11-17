@@ -172,7 +172,12 @@ struct TOMLScanner {
 
     // MARK: values (span only)
 
-    mutating func value() throws(TOMLEditError) {
+    /// Config files nest a handful of levels; the limit keeps recursion (here and in TOMLDecoder,
+    /// which only sees files that pass the scanner) far from the stack's end.
+    static let maxDepth = 128
+
+    mutating func value(depth: Int = 0) throws(TOMLEditError) {
+        guard depth < Self.maxDepth else { throw TOMLEditError("nested more than \(Self.maxDepth) levels deep", at: i) }
         guard i < b.count else { throw TOMLEditError("expected value", at: i) }
         let start = i
         switch b[i] {
@@ -188,7 +193,7 @@ struct TOMLScanner {
                 skipTrivia()
                 guard i < b.count else { throw TOMLEditError("unterminated array", at: start) }
                 if b[i] == UInt8(ascii: "]") { i += 1; return }
-                try value()
+                try value(depth: depth + 1)
                 skipTrivia()
                 if i < b.count, b[i] == UInt8(ascii: ",") { i += 1 }
             }
@@ -207,7 +212,7 @@ struct TOMLScanner {
                     i += 1; return
                 }
                 _ = try key(); skipSpaces(); try expect("="); skipSpaces()
-                try value()
+                try value(depth: depth + 1)
                 skipSpaces()
                 afterComma = false
                 if i < b.count, b[i] == UInt8(ascii: ",") { i += 1; afterComma = true }
@@ -224,6 +229,10 @@ struct TOMLScanner {
                 while i < b.count, !Self.terminatesScalar(b[i]) { i += 1 }
             }
             guard i > start else { throw TOMLEditError("expected value", at: start) }
+            // TOML 1.0 times need seconds (`07:32:00`); TOMLDecoder also accepts the 1.1 form `07:32`.
+            if let colon = b[start..<i].firstIndex(of: UInt8(ascii: ":")), !(colon + 3 < i && b[colon + 3] == UInt8(ascii: ":")) {
+                throw TOMLEditError("TOML 1.0 times need seconds (HH:MM:SS)", at: start)
+            }
         }
     }
 

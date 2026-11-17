@@ -129,8 +129,19 @@ func replacingOnce(_ fixture: String, _ old: String, _ new: String) -> String {
     @Test func unsupportedAndInvalidEditsThrowAndLeaveDocumentUnchanged() throws {
         var doc = try TOMLDocument(Fixtures.grok)
         #expect(throws: TOMLEditError.self) { try doc.set(["marketplace", "sources", "name"], to: "x") }  // inside [[…]]
-        #expect(throws: TOMLEditError.self) { try doc.set(["ui"], to: 1) }   // would redefine a table: rejected by the validator
         #expect(throws: TOMLEditError.self) { try doc.removeTable(["nope"]) }
         #expect(doc.bytes == Fixtures.grok.bytes)
+    }
+
+    @Test func scalarReplacesTableAndItsSubTables() throws {
+        var doc = try TOMLDocument("a = 1\n\n[ui.theme]\nx = 1\n\n[cli]\ny = 2\n\n[ui]\nz = 3\n")
+        try doc.set(["ui"], to: 1)
+        #expect(doc.text == "a = 1\nui = 1\n\n[cli]\ny = 2\n")
+    }
+
+    @Test func inlineTableKeyIsFound() throws {
+        let doc = try TOMLDocument("[s]\nenv = { A = \"1\" }\n")
+        #expect(try doc.inlineTableKey(containing: ["s", "env", "B"]) == ["s", "env"])
+        #expect(try doc.inlineTableKey(containing: ["s", "env"]) == nil)
     }
 }

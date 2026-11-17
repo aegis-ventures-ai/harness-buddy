@@ -14,6 +14,11 @@ let package = Package(
     targets: [
         .target(name: "HarnessButlerKit", dependencies: [.product(name: "TOMLDecoder", package: "TOMLDecoder")]),
         .executableTarget(name: "hb-probe", dependencies: ["HarnessButlerKit"]),
-        .testTarget(name: "HarnessButlerKitTests", dependencies: ["HarnessButlerKit", .product(name: "TOMLDecoder", package: "TOMLDecoder")]),
+        .testTarget(
+            name: "HarnessButlerKitTests",
+            dependencies: ["HarnessButlerKit", .product(name: "TOMLDecoder", package: "TOMLDecoder")],
+            // toml-lang/toml-test cases (MIT), see Fixtures/toml-test/README.md.
+            resources: [.copy("Fixtures/toml-test")]
+        ),
     ]
 )

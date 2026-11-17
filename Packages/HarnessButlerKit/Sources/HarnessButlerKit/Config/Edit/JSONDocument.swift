@@ -79,8 +79,16 @@ public struct JSONDocument: Sendable {
         }
     }
 
-    /// Removes the member at `path`, including its separating comma.
+    /// Removes the member at `path`, including its separating comma (every copy of a duplicated key).
     public mutating func remove(_ path: [String]) throws {
+        try removeOne(path)
+        while let parent = try node(at: Array(path.dropLast()), in: root()), case .object(let members) = parent.kind,
+              members.contains(where: { $0.key == path.last! }) {
+            try removeOne(path)
+        }
+    }
+
+    private mutating func removeOne(_ path: [String]) throws {
         let r = try root()
         guard let parent = try node(at: Array(path.dropLast()), in: r), case .object(let members) = parent.kind,
               let idx = members.firstIndex(where: { $0.key == path.last! }) else { throw JSONEditError("no such key: \(path)") }
@@ -158,11 +166,14 @@ public struct JSONDocument: Sendable {
 
 /// Strict RFC 8259 recursive-descent parser that records spans.
 struct JSONParser {
+    /// Config files nest a handful of levels; the limit keeps recursion far from the stack's end.
+    static let maxDepth = 128
     let b: [UInt8]
     var i = 0
     init(_ bytes: [UInt8]) { b = bytes }
 
     mutating func parseDocument() throws -> JSONNode {
+        if b.starts(with: [0xEF, 0xBB, 0xBF]) { i = 3 }   // a UTF-8 BOM is tolerated and kept as is
         ws()
         let n = try value(depth: 0)
         ws()
@@ -173,7 +184,7 @@ struct JSONParser {
     private mutating func ws() { while i < b.count, b[i] == 0x20 || b[i] == 0x0A || b[i] == 0x0D || b[i] == 0x09 { i += 1 } }
 
     private mutating func value(depth: Int) throws -> JSONNode {
-        guard depth < 512 else { throw JSONEditError("nesting too deep", at: i) }
+        guard depth < JSONParser.maxDepth else { throw JSONEditError("nested more than \(JSONParser.maxDepth) levels deep", at: i) }
         guard i < b.count else { throw JSONEditError("unexpected end", at: i) }
         let s = i
         switch b[i] {
@@ -291,7 +302,15 @@ struct JSONParser {
     /// Decodes a node (from this parser's bytes) into an ordered value.
     func decode(_ n: JSONNode) throws -> JSONValue {
         switch n.kind {
-        case .object(let ms): return .object(OrderedPairs(try ms.map { ($0.key, try decode($0.value)) }))
+        case .object(let ms):
+            // Duplicate keys: the last one wins (as in JSON.parse and Claude Code), at the first one's position.
+            var pairs = OrderedPairs<JSONValue>([])
+            for m in ms {
+                let v = try decode(m.value)
+                if let index = pairs.pairs.firstIndex(where: { $0.key == m.key }) { pairs.pairs[index].value = v }
+                else { pairs.pairs.append(.init(key: m.key, value: v)) }
+            }
+            return .object(pairs)
         case .array(let es): return .array(try es.map(decode))
         case .scalar:
             let lit = String(decoding: b[n.range], as: UTF8.self)
