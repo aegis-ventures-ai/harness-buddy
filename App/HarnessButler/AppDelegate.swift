@@ -19,8 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AppSettings.registerDefaults()
         #if DEBUG
         store = DemoAPI.isEnabled ? DemoAPI.makeStore(appVersion: Self.appVersion) : UsageStore(appVersion: Self.appVersion)
+        store.history = try? UsageHistory(url: DemoAPI.isEnabled ? DemoAPI.historyURL : UsageHistory.standardURL)
         #else
         store = UsageStore(appVersion: Self.appVersion)
+        store.history = try? UsageHistory()
         #endif
         harnesses = HarnessStore(appVersion: Self.appVersion)
         statusItem = StatusItemController(store: store, harnesses: harnesses, openSettings: { [weak self] in self?.showSettings(page: $0) })

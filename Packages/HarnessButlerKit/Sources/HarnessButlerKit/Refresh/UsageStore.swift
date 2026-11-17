@@ -68,8 +68,10 @@ public final class UsageStore {
     @ObservationIgnored private let providers: [UsageProviderKey: any UsageProvider]
     /// Admin keys for API subscriptions (U-3).
     @ObservationIgnored public let secrets: any SecretStore
-    /// Called with every new snapshot (history, alerts).
+    /// Called with every new snapshot (alerts).
     @ObservationIgnored public var onSnapshot: ((Subscription, UsageSnapshot) -> Void)?
+    /// U-10: where new snapshots are recorded, if history is available.
+    @ObservationIgnored public var history: UsageHistory?
     @ObservationIgnored private let appVersion: String
     @ObservationIgnored private let homeDirectory: URL
     /// Resolved during `start()`; shared with `HarnessStore`.
@@ -202,7 +204,10 @@ public final class UsageStore {
         entry.issue = report.issue
         usage[id] = entry
         if report.snapshot != nil { scheduleCacheSave() }
-        if let accepted { onSnapshot?(subscription, accepted) }
+        if let accepted {
+            history?.record(accepted, for: id)
+            onSnapshot?(subscription, accepted)
+        }
     }
 
     /// Coalesce writes: at most one save every few seconds.
@@ -299,6 +304,7 @@ public final class UsageStore {
         }
         subscriptions.removeAll { $0.id == id }
         usage[id] = nil
+        history?.delete(subscription: id)
         persist()
         scheduleCacheSave()
     }

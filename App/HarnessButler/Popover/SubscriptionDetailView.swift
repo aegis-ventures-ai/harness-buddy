@@ -62,6 +62,10 @@ struct SubscriptionDetailView: View {
                     if let credits = snapshot.credits {
                         creditsRow(credits)
                     }
+                    if let window = historyWindow(snapshot), let history = store.history {
+                        Divider()
+                        historyChart(window, history: history)
+                    }
                 }
                 .padding(14)
             } else {
@@ -170,6 +174,48 @@ struct SubscriptionDetailView: View {
             .font(Theme.mono(9))
             .frame(height: 64)
             .accessibilityLabel("Spend over the last 7 days: " + days.map { money(for: $0.amount, spend) }.joined(separator: ", "))
+        }
+    }
+
+    /// The window the history sparkline follows: the longest one (usually weekly), as in the mockup.
+    private func historyWindow(_ snapshot: UsageSnapshot) -> UsageWindow? {
+        snapshot.windows.filter { $0.id != APISpend.budgetWindowID }.max { ($0.duration ?? 0) < ($1.duration ?? 0) }
+    }
+
+    /// U-9 sparkline: percent of the window used on each of the last 7 days, from U-10 history.
+    private func historyChart(_ window: UsageWindow, history: UsageHistory) -> some View {
+        let days = history.dailyUsage(subscription: subscription.id, window: window.id, days: 7, now: now)
+        let today = Calendar.current.startOfDay(for: now)
+        let color = Theme.color(for: subscription.harness)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("\(window.label) · last 7 days")
+                Spacer()
+                Text("% of window / day").foregroundStyle(.secondary)
+            }
+            .font(Theme.mono(10))
+            if days.allSatisfy({ $0.percent == 0 }) {
+                Text("History builds up while Harness Butler runs.")
+                    .font(Theme.mono(10))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .center)
+            } else {
+                Chart(days, id: \.day) { day in
+                    BarMark(x: .value("Day", day.day.formatted(.dateTime.weekday(.abbreviated))), y: .value("Used", day.percent))
+                        .foregroundStyle(day.day == today ? color : color.opacity(0.45))
+                        .cornerRadius(2)
+                }
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 2)) { value in
+                        AxisGridLine()
+                        AxisValueLabel { if let percent = value.as(Double.self) { Text("\(Int(percent))%") } }
+                    }
+                }
+                .font(Theme.mono(9))
+                .frame(height: 64)
+                .accessibilityLabel("\(window.label) used per day over the last 7 days: "
+                    + days.map { "\($0.day.formatted(.dateTime.weekday(.wide))) \(Int($0.percent.rounded())) percent" }.joined(separator: ", "))
+            }
         }
     }
 

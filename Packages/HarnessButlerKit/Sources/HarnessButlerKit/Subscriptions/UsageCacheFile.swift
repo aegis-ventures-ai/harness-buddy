@@ -28,6 +28,8 @@ public struct UsageCacheFile: Sendable {
     public func save(_ snapshots: [UUID: UsageSnapshot]) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try JSONEncoder.cache.encode(Payload(snapshots: snapshots)).write(to: url, options: [.atomic])
+        // Private to the user, like the rest of the app's data (spend totals, budgets).
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
     }
 }
 

@@ -8,8 +8,10 @@ import HarnessButlerKit
 enum DemoAPI {
     static var isEnabled: Bool { CommandLine.arguments.contains("--demo-api") }
 
+    static let directory = FileManager.default.temporaryDirectory.appending(path: "HarnessButler-demo-\(ProcessInfo.processInfo.processIdentifier)")
+    static var historyURL: URL { directory.appending(path: "history.sqlite") }
+
     static func makeStore(appVersion: String) -> UsageStore {
-        let directory = FileManager.default.temporaryDirectory.appending(path: "HarnessButler-demo-\(ProcessInfo.processInfo.processIdentifier)")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let file = SubscriptionFile(url: directory.appending(path: "subscriptions.json"))
         var subscriptions = ((try? SubscriptionFile.standard.load()) ?? nil) ?? []
