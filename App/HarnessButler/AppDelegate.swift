@@ -90,7 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "Harness Butler Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-            window.setContentSize(NSSize(width: 900, height: 620))
+            window.setContentSize(NSSize(width: 1040, height: 680))
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.center()

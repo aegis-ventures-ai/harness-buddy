@@ -32,6 +32,10 @@ struct SettingsView: View {
     let menuBar: MenuBarState
     @Bindable var navigation: SettingsNavigation
 
+    static let sidebarMinWidth: CGFloat = 200
+    static let sidebarIdealWidth: CGFloat = 230
+    static let detailMinWidth: CGFloat = 760
+
     var body: some View {
         NavigationSplitView {
             List(selection: $navigation.page) {
@@ -58,8 +62,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 230)
+            .navigationSplitViewColumnWidth(min: Self.sidebarMinWidth, ideal: Self.sidebarIdealWidth, max: 300)
         } detail: {
+            Group {
             switch navigation.page {
             case .subscriptions, nil: SubscriptionsSettings(store: store)
             case .menubar: MenuBarSettings(store: store, menuBar: menuBar)
@@ -72,8 +77,14 @@ struct SettingsView: View {
                                            description: Text("Its subscription may have been removed."))
                 }
             }
+            }
+            // The config page's seven-tab bar (about 101 pt per tab) and header need this much;
+            // below it SwiftUI centres the overflowing content and clips both edges.
+            .frame(minWidth: Self.detailMinWidth)
+            .navigationSplitViewColumnWidth(min: Self.detailMinWidth, ideal: Self.detailMinWidth + 60)
         }
-        .frame(minWidth: 820, minHeight: 540)
+        // The sidebar opens at its ideal width, so the window must fit that plus the detail minimum.
+        .frame(minWidth: Self.sidebarIdealWidth + Self.detailMinWidth + 10, minHeight: 560)
         .environment(navigation)
         .onAppear { config.setSubscriptions(store.subscriptions) }
         .onChange(of: store.subscriptions) { _, new in config.setSubscriptions(new) }
