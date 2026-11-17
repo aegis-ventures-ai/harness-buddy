@@ -60,15 +60,18 @@ struct StatusRing: View {
     }
 }
 
-/// Lettered harness avatar.
+/// Provider logo on a tinted tile.
 struct HarnessAvatar: View {
     var harness: Harness
     var size: CGFloat = 22
 
     var body: some View {
-        Text(Theme.initial(for: harness))
-            .font(Theme.mono(size * 0.5, weight: .bold))
-            .foregroundStyle(Theme.color(for: harness))
+        Image(Theme.logoName(for: harness))
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(Theme.logoColor(for: harness))
+            .padding(size * 0.2)
             .frame(width: size, height: size)
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.color(for: harness).opacity(0.15)))
             .accessibilityLabel(harness.displayName)

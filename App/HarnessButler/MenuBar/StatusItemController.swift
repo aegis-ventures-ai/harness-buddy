@@ -133,7 +133,7 @@ enum MenuBarTitle {
             case .onTrack: stale ? .secondaryLabelColor : .labelColor
             }
 
-            result.append(glyph(for: subscription.harness, color: Theme.nsColor(for: subscription.harness), font: font))
+            result.append(logo(for: subscription.harness, font: font))
             let text = window.map { Format.percent($0.remainingPercent) } ?? "–"
             result.append(NSAttributedString(string: "\u{2009}" + text, attributes: [.font: font, .foregroundColor: color]))
 
@@ -151,13 +151,12 @@ enum MenuBarTitle {
         return result
     }
 
-    private static func glyph(for harness: Harness, color: NSColor, font: NSFont) -> NSAttributedString {
-        let name = switch harness {
-        case .claude: "sparkle"
-        case .codex: "hexagon"
-        case .grok: "bolt.horizontal"
-        }
-        return symbol(name, color: color, font: font, size: 10)
+    private static func logo(for harness: Harness, font: NSFont) -> NSAttributedString {
+        guard let image = Theme.tintedLogo(for: harness, size: 13) else { return NSAttributedString() }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - image.size.height) / 2, width: image.size.width, height: image.size.height)
+        return NSAttributedString(attachment: attachment)
     }
 
     private static func symbol(_ name: String, color: NSColor, font: NSFont, size: CGFloat) -> NSAttributedString {

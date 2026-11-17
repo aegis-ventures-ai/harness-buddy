@@ -33,12 +33,35 @@ enum Theme {
         .system(size: size, weight: weight, design: .monospaced)
     }
 
-    static func initial(for harness: Harness) -> String {
+    /// Asset name of the provider mark (template image; see Resources/ProviderIcons-NOTICE.md).
+    static func logoName(for harness: Harness) -> String {
         switch harness {
-        case .claude: "C"
-        case .codex: "O"
-        case .grok: "G"
+        case .claude: "ProviderClaude"
+        case .codex: "ProviderOpenAI"
+        case .grok: "ProviderGrok"
         }
+    }
+
+    /// Logo colour: Claude's mark is orange; OpenAI's and Grok's are monochrome, so they follow the label colour.
+    static func logoNSColor(for harness: Harness) -> NSColor {
+        harness == .claude ? NSColor(hex: 0xD97757) : .labelColor
+    }
+
+    static func logoColor(for harness: Harness) -> Color { Color(nsColor: logoNSColor(for: harness)) }
+
+    /// The provider mark tinted for the current appearance. Drawn lazily, so a dynamic colour
+    /// like `labelColor` resolves against wherever it's drawn (e.g. a dark or light menubar).
+    static func tintedLogo(for harness: Harness, size: CGFloat) -> NSImage? {
+        guard let template = NSImage(named: logoName(for: harness)) else { return nil }
+        let color = logoNSColor(for: harness)
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            template.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        image.accessibilityDescription = harness.providerName
+        return image
     }
 }
 
