@@ -27,7 +27,9 @@ public enum SubscriptionGroup: Int, CaseIterable, Sendable, Comparable {
 
     public static func classify(_ usage: SubscriptionUsage, cadence: UsageCadence, at now: Date) -> SubscriptionGroup {
         guard let snapshot = usage.snapshot else { return usage.issue == nil ? .onTrack : .stale }
-        if usage.issue != nil || now.timeIntervalSince(snapshot.fetchedAt) > cadence.staleAfter { return .stale }
+        // Being rate-limited isn't an error while the last reading is still fresh enough.
+        let tolerated: Bool = if case .rateLimited = usage.issue { true } else { false }
+        if (usage.issue != nil && !tolerated) || now.timeIntervalSince(snapshot.fetchedAt) > cadence.staleAfter { return .stale }
         switch UsageRules.status(of: snapshot.current(at: now), at: now) {
         case .limited: return .limited
         case .atRisk: return .atRisk
@@ -117,9 +119,17 @@ public final class UsageStore {
         } catch {
             saveError = "Couldn't read saved subscriptions: \(error.localizedDescription)"
         }
+        let now = Date.now
         for (id, snapshot) in cacheFile.load() {
             guard let subscription = subscriptions.first(where: { $0.id == id }) else { continue }
-            usage[id] = SubscriptionUsage(snapshot: subscription.api == nil ? snapshot : snapshot.applyingBudget(subscription.api?.monthlyBudget))
+            var entry = SubscriptionUsage(snapshot: subscription.api == nil ? snapshot : snapshot.applyingBudget(subscription.api?.monthlyBudget))
+            // Treat the cached reading as the last attempt, so launch only re-reads stale data.
+            if snapshot.fetchedAt <= now { entry.refresh.lastAttempt = snapshot.fetchedAt }
+            usage[id] = entry
+        }
+        for (id, until) in cacheFile.loadBlocks() where until > now && subscriptions.contains(where: { $0.id == id }) {
+            usage[id, default: SubscriptionUsage()].refresh.blockedUntil = until
+            usage[id, default: SubscriptionUsage()].issue = .rateLimited(retryAfter: nil)
         }
         try? FileManager.default.createDirectory(at: scratchDirectory, withIntermediateDirectories: true)
         environment = await HarnessEnvironment.resolve(homeDirectory: homeDirectory)
@@ -139,7 +149,22 @@ public final class UsageStore {
         ticker = nil
         cacheSaveTask?.cancel()
         cacheSaveTask = nil
-        try? cacheFile.save(usage.compactMapValues(\.snapshot))
+        try? cacheFile.save(usage.compactMapValues(\.snapshot), blockedUntil: blocks)
+    }
+
+    /// Provider-imposed quiet periods still running, persisted so a relaunch respects them.
+    private var blocks: [UUID: Date] {
+        let now = Date.now
+        return usage.compactMapValues { entry in entry.refresh.blockedUntil.flatMap { $0 > now ? $0 : nil } }
+    }
+
+    /// When this subscription will next be read automatically, if it's waiting on a rate limit or back-off.
+    public func nextAttempt(for id: UUID, now: Date = .now) -> Date? {
+        guard let subscription = subscriptions.first(where: { $0.id == id }) else { return nil }
+        let entry = usage(for: id)
+        guard entry.issue != nil, !entry.refresh.inFlight else { return nil }
+        let due = RefreshPolicy.nextDue(cadence: subscription.cadence, state: entry.refresh, snapshot: entry.snapshot, onBattery: onBattery())
+        return due > now ? due : nil
     }
 
     // MARK: - Queries
@@ -203,7 +228,7 @@ public final class UsageStore {
         }
         entry.issue = report.issue
         usage[id] = entry
-        if report.snapshot != nil { scheduleCacheSave() }
+        if report.snapshot != nil || entry.refresh.blockedUntil != nil { scheduleCacheSave() }
         if let accepted {
             history?.record(accepted, for: id)
             onSnapshot?(subscription, accepted)
@@ -217,7 +242,7 @@ public final class UsageStore {
             try? await Task.sleep(for: .seconds(3))
             guard let self else { return }
             self.cacheSaveTask = nil
-            try? self.cacheFile.save(self.usage.compactMapValues(\.snapshot))
+            try? self.cacheFile.save(self.usage.compactMapValues(\.snapshot), blockedUntil: self.blocks)
         }
     }
 

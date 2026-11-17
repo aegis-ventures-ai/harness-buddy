@@ -241,7 +241,10 @@ struct SubscriptionRow: View {
                     SpendLine(spend: spend, budget: subscription.api?.monthlyBudget, now: now, showsReset: window == nil)
                 }
                 if let issue = usage.issue {
-                    Text(issue.message).font(Theme.mono(10)).foregroundStyle(Theme.bad).lineLimit(2)
+                    Text(IssueText.describe(issue, for: subscription, nextAttempt: store.nextAttempt(for: subscription.id, now: now), now: now))
+                        .font(Theme.mono(10))
+                        .foregroundStyle(IssueText.isMinor(issue, stale: stale) ? Theme.warn : Theme.bad)
+                        .lineLimit(2)
                 }
             }
         }
@@ -263,6 +266,25 @@ struct SubscriptionRow: View {
         }
         guard let window else { return "\(subscription.name), no data yet" }
         return "\(subscription.name), \(window.label), \(Int(window.remainingPercent.rounded())) percent left, \(Format.resets(window.resetsAt, now: now))"
+    }
+}
+
+/// Row text for an issue, e.g. "Anthropic is rate-limiting usage reads · next try in 4m".
+enum IssueText {
+    static func describe(_ issue: UsageIssue, for subscription: Subscription, nextAttempt: Date?, now: Date) -> String {
+        let base: String = if case .rateLimited = issue {
+            "\(subscription.api?.provider.displayName ?? subscription.harness.providerName) is rate-limiting usage reads"
+        } else {
+            issue.message
+        }
+        guard let nextAttempt else { return base }
+        return base + " · next try in \(Format.duration(max(60, nextAttempt.timeIntervalSince(now))))"
+    }
+
+    /// A rate limit while the last reading is still fresh: shown as a warning, not an error.
+    static func isMinor(_ issue: UsageIssue, stale: Bool) -> Bool {
+        if case .rateLimited = issue { return !stale }
+        return false
     }
 }
 

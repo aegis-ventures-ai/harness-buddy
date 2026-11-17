@@ -82,7 +82,9 @@ public enum RefreshPolicy {
         let sinceAttempt = state.lastAttempt.map { now.timeIntervalSince($0) } ?? .infinity
         switch trigger {
         case .launch:
-            return true
+            // A relaunch doesn't re-read data that's still fresh (the cache seeds `lastAttempt`),
+            // so quitting and reopening the app can't hammer a provider.
+            return state.lastAttempt == nil || now >= nextDue(cadence: cadence, state: state, snapshot: snapshot, onBattery: onBattery)
         case .manual:
             return sinceAttempt >= manualMinimumGap
         case .popoverOpened:
@@ -120,6 +122,9 @@ public enum RefreshPolicy {
         if issue.shouldBackOff { state.consecutiveFailures += 1 }
         if let retryAfter = issue.retryAfter {
             state.blockedUntil = now.addingTimeInterval(retryAfter)
+        } else if case .rateLimited = issue {
+            // No retry-after: hold off for the back-off step, and remember it across relaunches.
+            state.blockedUntil = now.addingTimeInterval(backoff[min(state.consecutiveFailures, backoff.count) - 1])
         }
     }
 }

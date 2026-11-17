@@ -42,7 +42,8 @@ struct SubscriptionDetailView: View {
                 if let issue = usage.issue {
                     GridRow {
                         Text("status").foregroundStyle(.secondary)
-                        Text(issue.message).foregroundStyle(Theme.bad)
+                        Text(IssueText.describe(issue, for: subscription, nextAttempt: store.nextAttempt(for: subscription.id, now: now), now: now))
+                            .foregroundStyle(IssueText.isMinor(issue, stale: store.isStale(subscription, at: now)) ? Theme.warn : Theme.bad)
                     }
                 }
             }

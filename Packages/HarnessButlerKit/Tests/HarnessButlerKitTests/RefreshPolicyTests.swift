@@ -93,3 +93,54 @@ import Testing
         #expect(s.blockedUntil == nil)
     }
 }
+
+@Suite struct RelaunchAndRateLimitTests {
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func launch(lastAttemptAgo: TimeInterval?, blockedFor: TimeInterval? = nil) -> Bool {
+        var state = RefreshState()
+        state.lastAttempt = lastAttemptAgo.map { t0.addingTimeInterval(-$0) }
+        state.blockedUntil = blockedFor.map { t0.addingTimeInterval($0) }
+        return RefreshPolicy.shouldRefresh(harness: .claude, state: state, snapshot: nil, trigger: .launch, now: t0, onBattery: false)
+    }
+
+    @Test func launchOnlyReadsStaleData() {
+        #expect(launch(lastAttemptAgo: nil))
+        #expect(!launch(lastAttemptAgo: 60))          // read a minute ago (seeded from the cache)
+        #expect(launch(lastAttemptAgo: 5 * 60))
+        #expect(!launch(lastAttemptAgo: nil, blockedFor: 60))
+    }
+
+    @Test func rateLimitWithoutRetryAfterBlocksForTheBackoffStep() {
+        var state = RefreshState()
+        RefreshPolicy.record(.failure(.rateLimited(retryAfter: nil)), into: &state, at: t0)
+        #expect(state.blockedUntil == t0.addingTimeInterval(5 * 60))
+        RefreshPolicy.record(.failure(.rateLimited(retryAfter: nil)), into: &state, at: t0)
+        #expect(state.blockedUntil == t0.addingTimeInterval(10 * 60))
+        // Other failures back off through `nextDue` without a hard block.
+        var other = RefreshState()
+        RefreshPolicy.record(.failure(.unavailable("x")), into: &other, at: t0)
+        #expect(other.blockedUntil == nil)
+    }
+
+    @Test func freshDataWhileRateLimitedIsNotAnError() {
+        let window = UsageWindow(id: "w", label: "w", usedPercent: 10, resetsAt: t0.addingTimeInterval(86_400), duration: 7 * 86_400)
+        func usage(age: TimeInterval) -> SubscriptionUsage {
+            SubscriptionUsage(snapshot: UsageSnapshot(windows: [window], planName: nil, fetchedAt: t0.addingTimeInterval(-age), source: .live),
+                              issue: .rateLimited(retryAfter: nil))
+        }
+        #expect(SubscriptionGroup.classify(usage(age: 4 * 60), harness: .claude, at: t0) == .onTrack)
+        #expect(SubscriptionGroup.classify(usage(age: 31 * 60), harness: .claude, at: t0) == .stale)
+    }
+
+    @Test func blocksSurviveTheCacheFile() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "hb-blocks-\(UUID().uuidString)/usage-cache.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let cache = UsageCacheFile(url: url)
+        let id = UUID()
+        try cache.save([:], blockedUntil: [id: t0])
+        #expect(cache.loadBlocks() == [id: t0])
+        try cache.save([:])
+        #expect(cache.loadBlocks().isEmpty)
+    }
+}
