@@ -203,6 +203,8 @@ private struct MenuBarSettings: View {
     let store: UsageStore
     let menuBar: MenuBarState
     @AppStorage(AppSettings.showUpdateBadgeKey) private var showUpdateBadge = true
+    @AppStorage(AppSettings.notifyUpdatesKey) private var notifyUpdates = false
+    @AppStorage(AppSettings.notificationsDeniedKey) private var notificationsDenied = false
 
     var body: some View {
         Form {
@@ -213,7 +215,6 @@ private struct MenuBarSettings: View {
                     ))
                 }
                 LabeledContent("Width", value: "\(Int(menuBar.width.rounded())) pt")
-                Toggle("Show a dot when a harness update is available", isOn: $showUpdateBadge)
                 if menuBar.isLikelyHidden {
                     Label("macOS appears to be hiding the menubar item because it doesn't fit. Unpin some subscriptions or remove other menubar items.",
                           systemImage: "eye.slash")
@@ -222,6 +223,25 @@ private struct MenuBarSettings: View {
                     Label("The item is wide. On smaller or notched displays macOS may hide it. Consider unpinning some subscriptions.",
                           systemImage: "exclamationmark.triangle")
                         .foregroundStyle(Theme.warn)
+                }
+            }
+            Section("Harness updates") {
+                Toggle("Show a dot in the menubar when an update is available", isOn: $showUpdateBadge)
+                Toggle(isOn: $notifyUpdates) {
+                    Text("Notify me when an update is available")
+                    Text("Once per version. Updates still only run when you click Update.")
+                }
+                if notificationsDenied && !notifyUpdates {
+                    HStack {
+                        Label("Notifications for Harness Butler are turned off in System Settings.", systemImage: "bell.slash")
+                            .foregroundStyle(Theme.warn)
+                        Spacer()
+                        Button("Open Notifications Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
                 }
             }
             Section {

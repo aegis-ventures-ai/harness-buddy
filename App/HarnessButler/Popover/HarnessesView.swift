@@ -22,6 +22,8 @@ struct HarnessesView: View {
                     harness: harness,
                     status: harnesses.status(for: harness),
                     run: harnesses.runs[harness],
+                    releaseNotes: harnesses.releaseNotes[harness],
+                    notesLoading: harnesses.releaseNotesLoading.contains(harness),
                     profiles: store.subscriptions.filter { $0.harness == harness }.count,
                     now: now,
                     update: { harnesses.update(harness) },
@@ -53,6 +55,8 @@ private struct HarnessRow: View {
     let harness: Harness
     let status: HarnessStatus
     let run: UpdateRun?
+    let releaseNotes: ReleaseNotes?
+    let notesLoading: Bool
     let profiles: Int
     let now: Date
     let update: () -> Void
@@ -144,9 +148,17 @@ private struct HarnessRow: View {
         }
     }
 
-    /// What will run, and the H-7 warning about sessions that keep the old version.
+    /// What's new (H-5), what will run, and the H-7 warning about sessions that keep the old version.
     private var notes: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let latest = status.latest {
+                ReleaseNotesView(
+                    notes: releaseNotes,
+                    isLoading: notesLoading,
+                    fallbackURL: ReleaseNotesSource.forHarness(harness, target: latest).fullNotesURL
+                )
+                Divider().padding(.vertical, 2)
+            }
             if let command = status.updateCommand {
                 Text("runs: \(command.displayString)").foregroundStyle(.secondary)
             }
@@ -155,6 +167,7 @@ private struct HarnessRow: View {
                 Label("\(n) \(harness.executableName) process\(n == 1 ? " is" : "es are") running and will keep the old version until restarted",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .font(Theme.mono(10))

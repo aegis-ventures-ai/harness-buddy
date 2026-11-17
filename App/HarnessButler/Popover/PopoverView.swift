@@ -3,21 +3,21 @@ import SwiftUI
 
 /// The left-click popover: subscriptions grouped by status (U-8), with a per-subscription detail page (U-9).
 struct PopoverView: View {
-    enum Page: Hashable { case usage, harnesses }
+    typealias Page = PopoverNavigation.Page
 
     let store: UsageStore
     let harnesses: HarnessStore
+    let navigation: PopoverNavigation
     let openSettings: () -> Void
-    @State private var selection: UUID?
-    @State private var page: Page = Self.initialPage
 
-    private static var initialPage: Page {
-        #if DEBUG
-        // `--open-popover harnesses` opens on the harnesses page (UI checks).
-        if let index = CommandLine.arguments.firstIndex(of: "--open-popover"),
-           CommandLine.arguments.dropFirst(index + 1).first == "harnesses" { return .harnesses }
-        #endif
-        return .usage
+    private var page: Page {
+        get { navigation.page }
+        nonmutating set { navigation.page = newValue }
+    }
+
+    private var selection: UUID? {
+        get { navigation.selection }
+        nonmutating set { navigation.selection = newValue }
     }
 
     var body: some View {

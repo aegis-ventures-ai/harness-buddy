@@ -29,6 +29,21 @@ if CommandLine.arguments.contains("--harnesses") {
         print("  version: \(install.version.map(\.description) ?? "?")  (\(install.versionOutput ?? "no output"))  method: \(install.method.displayName)  channel: \(install.channel ?? "-")")
         print("  latest: \(status.latest.map(\.description) ?? "?")  update available: \(status.isUpdateAvailable)  running: \(status.runningProcesses)")
         print("  update command: \(status.updateCommand?.displayString ?? "none")\(status.checkError.map { "  error: \($0)" } ?? "")")
+        // --notes: fetch the release notes for the latest version and show what would be displayed.
+        if CommandLine.arguments.contains("--notes"), let target = status.latest ?? install.version {
+            let source = ReleaseNotesSource.forHarness(harness, target: target)
+            let started = ContinuousClock.now
+            guard let entries = await HarnessStore.fetchReleaseNotes(source, session: .shared, appVersion: "probe") else {
+                print("  notes: fetch failed (\(source.url))"); continue
+            }
+            print("  notes: \(entries.count) versions parsed (\(entries.map(\.version.description).prefix(6).joined(separator: ", "))…) in \(ContinuousClock.now - started)")
+            let selected = ReleaseNotes.select(entries, installed: status.isUpdateAvailable ? install.version : nil, target: target, fullNotesURL: source.fullNotesURL)
+            for entry in selected.entries.prefix(2) {
+                print("  ## \(entry.version)\(entry.date.map { " (\($0))" } ?? "")  \(entry.itemCount) items")
+                for block in entry.blocks.prefix(4) { print("     \(block)".prefix(140)) }
+            }
+            print("  partial: \(selected.isPartial)  full: \(selected.fullNotesURL)")
+        }
     }
     store.stop()
     exit(0)

@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var store: UsageStore!
     private(set) var harnesses: HarnessStore!
     private var statusItem: StatusItemController?
+    private var updateNotifier: UpdateNotifier?
     private var settingsWindow: NSWindow?
 
     static var appVersion: String {
@@ -17,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = UsageStore(appVersion: Self.appVersion)
         harnesses = HarnessStore(appVersion: Self.appVersion)
         statusItem = StatusItemController(store: store, harnesses: harnesses, openSettings: { [weak self] in self?.showSettings() })
+        // Before the first check, so a notification clicked while the app wasn't running is delivered.
+        updateNotifier = UpdateNotifier(harnesses: harnesses) { [weak self] in
+            NSApp.activate()
+            self?.statusItem?.showPopover(.harnesses)
+        }
         observeSleep()
         Task {
             await store.start()

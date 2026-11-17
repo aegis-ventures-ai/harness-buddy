@@ -58,6 +58,12 @@ public final class HarnessStore {
     public private(set) var lastCheck: Date?
     public private(set) var lastDetection: Date?
     public private(set) var isChecking = false
+    /// H-5: notes for each pending update (installed, latest].
+    public private(set) var releaseNotes: [Harness: ReleaseNotes] = [:]
+    public private(set) var releaseNotesLoading: Set<Harness> = []
+
+    /// Called after each latest-version check (H-6 notifications hook in here).
+    @ObservationIgnored public var onCheckCompleted: (@MainActor () -> Void)?
 
     /// Latest-version lookups run this often (spike 01: 6–12 h).
     public static let checkInterval: TimeInterval = 6 * 3600
@@ -66,6 +72,9 @@ public final class HarnessStore {
     @ObservationIgnored private let appVersion: String
     @ObservationIgnored private var environment: HarnessEnvironment?
     @ObservationIgnored private var ticker: Task<Void, Never>?
+    /// Parsed notes per harness, keyed by the target version they were fetched for.
+    @ObservationIgnored private var fetchedNotes: [Harness: (target: SemanticVersion, entries: [ReleaseNotes.Entry])] = [:]
+    @ObservationIgnored private var notesFailures: [Harness: (target: SemanticVersion, at: Date)] = [:]
 
     public init(session: URLSession = .shared, appVersion: String) {
         self.session = session
@@ -156,6 +165,61 @@ public final class HarnessStore {
             }
             statuses[harness] = status
         }
+        loadReleaseNotes(now: now)
+        if latestDue { onCheckCompleted?() }
+    }
+
+    // MARK: - Release notes (H-5)
+
+    /// Fetch notes for pending updates. Each target version is fetched once; failures retry after an hour.
+    private func loadReleaseNotes(now: Date) {
+        for harness in Harness.allCases {
+            let status = status(for: harness)
+            guard status.isUpdateAvailable, let target = status.latest else {
+                releaseNotes[harness] = nil
+                continue
+            }
+            let source = ReleaseNotesSource.forHarness(harness, target: target)
+            if let fetched = fetchedNotes[harness], fetched.target == target {
+                releaseNotes[harness] = .select(fetched.entries, installed: status.installation?.version, target: target, fullNotesURL: source.fullNotesURL)
+                continue
+            }
+            if let failure = notesFailures[harness], failure.target == target, now.timeIntervalSince(failure.at) < 3600 { continue }
+            guard !releaseNotesLoading.contains(harness) else { continue }
+            releaseNotesLoading.insert(harness)
+            Task { [weak self, session, appVersion] in
+                let entries = await Self.fetchReleaseNotes(source, session: session, appVersion: appVersion)
+                self?.finishReleaseNotes(harness, target: target, entries: entries, source: source)
+            }
+        }
+    }
+
+    private func finishReleaseNotes(_ harness: Harness, target: SemanticVersion, entries: [ReleaseNotes.Entry]?, source: ReleaseNotesSource) {
+        releaseNotesLoading.remove(harness)
+        guard let entries else {
+            notesFailures[harness] = (target, .now)
+            return
+        }
+        fetchedNotes[harness] = (target, entries)
+        let status = status(for: harness)
+        guard status.isUpdateAvailable, status.latest == target else { return }
+        releaseNotes[harness] = .select(entries, installed: status.installation?.version, target: target, fullNotesURL: source.fullNotesURL)
+    }
+
+    public nonisolated static func fetchReleaseNotes(_ source: ReleaseNotesSource, session: URLSession, appVersion: String) async -> [ReleaseNotes.Entry]? {
+        var request = URLRequest(url: source.url, timeoutInterval: 20)
+        request.setValue("HarnessButler/\(appVersion)", forHTTPHeaderField: "User-Agent")
+        if case .githubReleases = source.format { request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept") }
+        if let bytes = source.rangeBytes { request.setValue("bytes=0-\(bytes - 1)", forHTTPHeaderField: "Range") }
+        guard let (data, response) = try? await session.data(for: request) else { return nil }
+        let complete: Bool
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 200: complete = true
+        case 206: complete = false
+        default: return nil
+        }
+        let entries = source.parse(data, complete: complete)
+        return entries.isEmpty ? nil : entries
     }
 
     public enum LatestVersionError: Error, Sendable {
@@ -242,6 +306,7 @@ public final class HarnessStore {
             status.runningProcesses = RunningProcesses.count(executable: installation.resolvedBinary, excluding: ChildProcessRegistry.shared.pids)
         }
         statuses[run.harness] = status
+        if !status.isUpdateAvailable { releaseNotes[run.harness] = nil }
         run.state = Self.outcome(result: result, from: run.fromVersion, target: run.targetVersion, now: installation?.version)
         switch run.state {
         case .succeeded(let version): run.log.appendLine("✓ \(run.harness.displayName) is now \(version.map(\.description) ?? "updated")")

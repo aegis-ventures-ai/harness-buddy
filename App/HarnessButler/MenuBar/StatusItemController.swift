@@ -12,6 +12,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private var clock: Timer?
     let menuBarState = MenuBarState()
+    let navigation = PopoverNavigation()
 
     init(store: UsageStore, harnesses: HarnessStore, openSettings: @escaping () -> Void) {
         self.store = store
@@ -25,6 +26,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.contentViewController = NSHostingController(rootView: PopoverView(
             store: store,
             harnesses: harnesses,
+            navigation: navigation,
             openSettings: { [weak self] in self?.closePopoverThen(openSettings) }
         ))
 
@@ -104,6 +106,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         togglePopover(button)
     }
     #endif
+
+    /// Open the popover on a page (e.g. from an update notification).
+    func showPopover(_ page: PopoverNavigation.Page) {
+        navigation.show(page)
+        guard let button = statusItem.button, !popover.isShown else { return }
+        togglePopover(button)
+    }
 
     // MARK: - Clicks
 
