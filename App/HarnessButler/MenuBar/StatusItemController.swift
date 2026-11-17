@@ -114,6 +114,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         togglePopover(button)
     }
 
+    /// Open the popover on a subscription's detail page (from a usage notification).
+    func showSubscription(_ id: UUID) {
+        navigation.show(.usage)
+        if store.subscriptions.contains(where: { $0.id == id }) { navigation.selection = id }
+        guard let button = statusItem.button, !popover.isShown else { return }
+        togglePopover(button)
+    }
+
     // MARK: - Clicks
 
     @objc private func clicked(_ sender: NSStatusBarButton) {

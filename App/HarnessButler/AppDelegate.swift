@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let settingsNavigation = SettingsNavigation()
     private var statusItem: StatusItemController?
     private var updateNotifier: UpdateNotifier?
+    private var usageNotifier: UsageNotifier?
     private var settingsWindow: NSWindow?
 
     static var appVersion: String {
@@ -27,10 +28,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         harnesses = HarnessStore(appVersion: Self.appVersion)
         statusItem = StatusItemController(store: store, harnesses: harnesses, openSettings: { [weak self] in self?.showSettings(page: $0) })
         // Before the first check, so a notification clicked while the app wasn't running is delivered.
-        updateNotifier = UpdateNotifier(harnesses: harnesses) { [weak self] in
+        updateNotifier = UpdateNotifier(harnesses: harnesses, openHarnesses: { [weak self] in
             NSApp.activate()
             self?.statusItem?.showPopover(.harnesses)
-        }
+        }, openSubscription: { [weak self] id in
+            NSApp.activate()
+            self?.statusItem?.showSubscription(id)
+        })
+        #if DEBUG
+        usageNotifier = DemoAPI.isEnabled ? UsageNotifier(store: store, ledgerURL: DemoAPI.directory.appending(path: "usage-alerts.json")) : UsageNotifier(store: store)
+        #else
+        usageNotifier = UsageNotifier(store: store)
+        #endif
         observeSleep()
         Task {
             await store.start()

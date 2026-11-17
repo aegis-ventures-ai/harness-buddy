@@ -408,6 +408,7 @@ private struct MenuBarSettings: View {
     let menuBar: MenuBarState
     @AppStorage(AppSettings.showUpdateBadgeKey) private var showUpdateBadge = true
     @AppStorage(AppSettings.notifyUpdatesKey) private var notifyUpdates = false
+    @AppStorage(AppSettings.notifyUsageKey) private var notifyUsage = false
     @AppStorage(AppSettings.notificationsDeniedKey) private var notificationsDenied = false
 
     var body: some View {
@@ -429,13 +430,19 @@ private struct MenuBarSettings: View {
                         .foregroundStyle(Theme.warn)
                 }
             }
+            Section("Usage alerts") {
+                Toggle(isOn: $notifyUsage) {
+                    Text("Notify me about usage")
+                    Text("When a window passes 80% and 95% used, and when a limited window resets. Each once per window period. Choose per subscription in its detail view.")
+                }
+            }
             Section("Harness updates") {
                 Toggle("Show a dot in the menubar when an update is available", isOn: $showUpdateBadge)
                 Toggle(isOn: $notifyUpdates) {
                     Text("Notify me when an update is available")
                     Text("Once per version. Updates still only run when you click Update.")
                 }
-                if notificationsDenied && !notifyUpdates {
+                if notificationsDenied && !notifyUpdates && !notifyUsage {
                     HStack {
                         Label("Notifications for Harness Butler are turned off in System Settings.", systemImage: "bell.slash")
                             .foregroundStyle(Theme.warn)

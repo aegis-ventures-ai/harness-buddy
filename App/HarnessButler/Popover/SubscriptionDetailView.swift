@@ -66,6 +66,8 @@ struct SubscriptionDetailView: View {
                         Divider()
                         historyChart(window, history: history)
                     }
+                    Divider()
+                    AlertChips(subscription: subscription)
                 }
                 .padding(14)
             } else {
@@ -240,5 +242,48 @@ struct SubscriptionDetailView: View {
                 )
             }
         }
+    }
+}
+
+/// §4.5 per-subscription choices, as in the mockup: "notify when used 80% 95% reset".
+private struct AlertChips: View {
+    let subscription: Subscription
+    @State private var preferences = UsageAlertPreferences.standard
+    @AppStorage(AppSettings.notifyUsageKey) private var notifyUsage = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("notify when used").foregroundStyle(.secondary)
+            Spacer()
+            ForEach(UsageAlertPreferences.defaultThresholds, id: \.self) { threshold in
+                chip("\(Int(threshold))%", isOn: preferences.thresholds.contains(threshold)) {
+                    if preferences.thresholds.contains(threshold) {
+                        preferences.thresholds.removeAll { $0 == threshold }
+                    } else {
+                        preferences.thresholds = (preferences.thresholds + [threshold]).sorted()
+                    }
+                }
+            }
+            chip("reset", isOn: preferences.notifyOnReset) { preferences.notifyOnReset.toggle() }
+        }
+        .font(Theme.mono(11))
+        .opacity(notifyUsage ? 1 : 0.6)
+        .help(notifyUsage ? "Notifications for this subscription's windows" : "Usage notifications are off. Turn them on in Settings → Menubar.")
+        .onAppear { preferences = AppSettings.alertPreferences(for: subscription.id) }
+        .onChange(of: preferences) { _, new in AppSettings.setAlertPreferences(new, for: subscription.id) }
+    }
+
+    private func chip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(isOn ? Theme.accent.opacity(0.25) : Color.clear, in: Capsule())
+                .overlay(Capsule().strokeBorder(isOn ? Theme.accent : Color.secondary.opacity(0.4)))
+                .foregroundStyle(isOn ? Color.primary : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Notify at \(title)")
+        .accessibilityValue(isOn ? "on" : "off")
     }
 }

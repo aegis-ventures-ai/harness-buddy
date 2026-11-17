@@ -11,11 +11,18 @@ enum AppSettings {
     static let notificationsDeniedKey = "notificationsDenied"
     /// Which update versions were already announced (JSON).
     static let notificationLedgerKey = "updateNotificationLedger"
+    /// §4.5: threshold and reset notifications (opt-in).
+    static let notifyUsageKey = "notifyUsage"
+    /// Per-subscription alert choices, `[uuid: UsageAlertPreferences]` (JSON).
+    static let usageAlertPreferencesKey = "usageAlertPreferences"
+    /// M-2: menubar display mode.
+    static let menuBarModeKey = "menuBarMode"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             showUpdateBadgeKey: true,
             notifyUpdatesKey: false,
+            notifyUsageKey: false,
             notificationsDeniedKey: false,
         ])
     }
@@ -25,6 +32,29 @@ enum AppSettings {
     static var notifyUpdates: Bool {
         get { UserDefaults.standard.bool(forKey: notifyUpdatesKey) }
         set { UserDefaults.standard.set(newValue, forKey: notifyUpdatesKey) }
+    }
+
+    static var notifyUsage: Bool {
+        get { UserDefaults.standard.bool(forKey: notifyUsageKey) }
+        set { UserDefaults.standard.set(newValue, forKey: notifyUsageKey) }
+    }
+
+    static var usageAlertPreferences: [UUID: UsageAlertPreferences] {
+        get {
+            UserDefaults.standard.data(forKey: usageAlertPreferencesKey)
+                .flatMap { try? JSONDecoder().decode([UUID: UsageAlertPreferences].self, from: $0) } ?? [:]
+        }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: usageAlertPreferencesKey) }
+    }
+
+    static func alertPreferences(for id: UUID) -> UsageAlertPreferences {
+        usageAlertPreferences[id] ?? .standard
+    }
+
+    static func setAlertPreferences(_ preferences: UsageAlertPreferences, for id: UUID) {
+        var all = usageAlertPreferences
+        all[id] = preferences == .standard ? nil : preferences
+        usageAlertPreferences = all
     }
 
     static var notificationLedger: UpdateNotificationLedger {

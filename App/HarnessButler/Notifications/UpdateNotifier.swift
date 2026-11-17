@@ -5,14 +5,18 @@ import UserNotifications
 /// H-6: an opt-in notification when a harness update becomes available. Each version is announced
 /// once (the ledger persists across launches). Clicking it opens the popover on the harnesses page.
 /// It never starts an update.
+///
+/// Also the app's notification-center delegate: a usage alert (§4.5) opens that subscription's detail.
 final class UpdateNotifier: NSObject, UNUserNotificationCenterDelegate {
     private let harnesses: HarnessStore
     private let openHarnesses: () -> Void
+    private let openSubscription: (UUID) -> Void
     private var wasEnabled = AppSettings.notifyUpdates
 
-    init(harnesses: HarnessStore, openHarnesses: @escaping () -> Void) {
+    init(harnesses: HarnessStore, openHarnesses: @escaping () -> Void, openSubscription: @escaping (UUID) -> Void) {
         self.harnesses = harnesses
         self.openHarnesses = openHarnesses
+        self.openSubscription = openSubscription
         super.init()
         UNUserNotificationCenter.current().delegate = self
         harnesses.onCheckCompleted = { [weak self] in self?.check() }
@@ -80,10 +84,11 @@ final class UpdateNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
-        await openHarnessesFromNotification()
+        let subscription = (response.notification.request.content.userInfo["subscription"] as? String).flatMap(UUID.init(uuidString:))
+        await open(subscription: subscription)
     }
 
-    private func openHarnessesFromNotification() {
-        openHarnesses()
+    private func open(subscription: UUID?) {
+        if let subscription { openSubscription(subscription) } else { openHarnesses() }
     }
 }
