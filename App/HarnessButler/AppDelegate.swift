@@ -4,6 +4,7 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var store: UsageStore!
+    private(set) var harnesses: HarnessStore!
     private var statusItem: StatusItemController?
     private var settingsWindow: NSWindow?
 
@@ -12,11 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppSettings.registerDefaults()
         store = UsageStore(appVersion: Self.appVersion)
-        statusItem = StatusItemController(store: store, openSettings: { [weak self] in self?.showSettings() })
+        harnesses = HarnessStore(appVersion: Self.appVersion)
+        statusItem = StatusItemController(store: store, harnesses: harnesses, openSettings: { [weak self] in self?.showSettings() })
         observeSleep()
         Task {
             await store.start()
+            if let environment = store.environment { harnesses.start(environment: environment) }
             #if DEBUG
             if CommandLine.arguments.contains("--open-popover") {
                 try? await Task.sleep(for: .seconds(3))
@@ -33,12 +37,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
+        harnesses.stop()
         ChildProcessRegistry.shared.terminateAll()
     }
 
     func showSettings(tab: SettingsTab = .subscriptions) {
         if settingsWindow == nil {
-            let view = SettingsView(store: store, menuBar: statusItem?.menuBarState ?? MenuBarState(), tab: tab)
+            let view = SettingsView(store: store, harnesses: harnesses, menuBar: statusItem?.menuBarState ?? MenuBarState(), tab: tab)
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "Harness Butler Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -62,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let store = self?.store else { return }
                 store.isPaused = false
                 store.refreshAll(.scheduled)
+                Task { await self?.harnesses.refresh(force: false) }
             }
         }
     }

@@ -64,7 +64,8 @@ public final class UsageStore {
     @ObservationIgnored private let providers: [Harness: any UsageProvider]
     @ObservationIgnored private let appVersion: String
     @ObservationIgnored private let homeDirectory: URL
-    @ObservationIgnored private var environment: HarnessEnvironment?
+    /// Resolved during `start()`; shared with `HarnessStore`.
+    @ObservationIgnored public private(set) var environment: HarnessEnvironment?
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private let scratchDirectory: URL
     @ObservationIgnored private let onBattery: @Sendable () -> Bool

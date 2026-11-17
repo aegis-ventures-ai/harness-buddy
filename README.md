@@ -21,9 +21,9 @@ make probe    # print one usage read per subscription, no UI (add --live via: cd
 
 The Xcode project is generated from `project.yml` and isn't committed. Run `make project` after pulling.
 
-`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback.
+`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback; `--harnesses` prints detected installs, latest versions and update commands (it never runs an update).
 
-Debug-build launch flags (pass after `open … --args`): `--open-popover` opens the popover on launch; `--open-settings [subscriptions|menubar|about]` opens Settings on that tab.
+Debug-build launch flags (pass after `open … --args`): `--open-popover [harnesses]` opens the popover on launch (and keeps it open until you click the item); `--open-settings [subscriptions|menubar|about]` opens Settings on that tab.
 
 ## Data the app keeps
 

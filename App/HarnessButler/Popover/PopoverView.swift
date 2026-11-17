@@ -3,17 +3,38 @@ import SwiftUI
 
 /// The left-click popover: subscriptions grouped by status (U-8), with a per-subscription detail page (U-9).
 struct PopoverView: View {
+    enum Page: Hashable { case usage, harnesses }
+
     let store: UsageStore
+    let harnesses: HarnessStore
     let openSettings: () -> Void
     @State private var selection: UUID?
+    @State private var page: Page = Self.initialPage
+
+    private static var initialPage: Page {
+        #if DEBUG
+        // `--open-popover harnesses` opens on the harnesses page (UI checks).
+        if let index = CommandLine.arguments.firstIndex(of: "--open-popover"),
+           CommandLine.arguments.dropFirst(index + 1).first == "harnesses" { return .harnesses }
+        #endif
+        return .usage
+    }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             Group {
                 if let id = selection, let subscription = store.subscriptions.first(where: { $0.id == id }) {
-                    SubscriptionDetailView(store: store, subscription: subscription, now: context.date) { selection = nil }
+                    SubscriptionDetailView(store: store, harnesses: harnesses, subscription: subscription, now: context.date) { selection = nil }
                 } else {
-                    list(now: context.date)
+                    VStack(alignment: .leading, spacing: 0) {
+                        header
+                        pagePicker
+                        Divider()
+                        switch page {
+                        case .usage: list(now: context.date)
+                        case .harnesses: HarnessesView(store: store, harnesses: harnesses, now: context.date)
+                        }
+                    }
                 }
             }
         }
@@ -23,8 +44,6 @@ struct PopoverView: View {
 
     private func list(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
             if store.subscriptions.isEmpty {
                 emptyState
             } else {
@@ -50,11 +69,17 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("subscriptions").font(Theme.mono(12, weight: .semibold))
-            Text("\(store.subscriptions.count)").foregroundStyle(.secondary)
+            Text(page == .usage ? "subscriptions" : "harnesses").font(Theme.mono(12, weight: .semibold))
+            Text("\(page == .usage ? store.subscriptions.count : installedHarnessCount)").foregroundStyle(.secondary)
             Spacer()
-            Button { store.refreshAll(.manual) } label: { Image(systemName: "arrow.clockwise") }
-                .help("Refresh all (at most once a minute per subscription)")
+            Button {
+                switch page {
+                case .usage: store.refreshAll(.manual)
+                case .harnesses: Task { await harnesses.refresh(force: true) }
+                }
+            } label: { Image(systemName: "arrow.clockwise") }
+                .disabled(page == .harnesses && harnesses.isChecking)
+                .help(page == .usage ? "Refresh all (at most once a minute per subscription)" : "Check for harness updates now")
             Button(action: openSettings) { Image(systemName: "gearshape") }
                 .help("Settings")
         }
@@ -62,6 +87,44 @@ struct PopoverView: View {
         .focusEffectDisabled()
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var installedHarnessCount: Int {
+        Harness.allCases.filter { harnesses.status(for: $0).installation != nil }.count
+    }
+
+    /// "usage | harnesses ●N" (mockup).
+    private var pagePicker: some View {
+        HStack(spacing: 4) {
+            pageButton("usage", page: .usage, badge: 0)
+            pageButton("harnesses", page: .harnesses, badge: harnesses.updatesAvailable.count)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    private func pageButton(_ title: String, page target: Page, badge: Int) -> some View {
+        Button {
+            page = target
+            if target == .harnesses { Task { await harnesses.refresh(force: false) } }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                if badge > 0 {
+                    Text("●\(badge)").foregroundStyle(Theme.accent)
+                        .accessibilityLabel("\(badge) update\(badge == 1 ? "" : "s") available")
+                }
+            }
+            .font(Theme.mono(11, weight: page == target ? .semibold : .regular))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6).fill(page == target ? Color.primary.opacity(0.1) : .clear))
+            .foregroundStyle(page == target ? Color.primary : .secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
     }
 
     private var emptyState: some View {

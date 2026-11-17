@@ -4,6 +4,7 @@ import SwiftUI
 /// U-9 detail: every window, source path, last refresh. History sparkline arrives with U-10 (M4).
 struct SubscriptionDetailView: View {
     let store: UsageStore
+    let harnesses: HarnessStore
     let subscription: Subscription
     let now: Date
     let back: () -> Void
@@ -30,7 +31,7 @@ struct SubscriptionDetailView: View {
             Divider()
 
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                row("harness", subscription.harness.displayName)
+                harnessRow
                 row("source", subscription.sourceDescription())
                 if let snapshot {
                     row("updated", "\(Format.age(snapshot.fetchedAt, now: now)) · \(snapshot.source == .live ? "live" : "harness cache")")
@@ -62,6 +63,26 @@ struct SubscriptionDetailView: View {
                     .foregroundStyle(.secondary)
                     .padding(14)
             }
+        }
+    }
+
+    /// "Claude Code · claude 2.1.326 · update available" (mockup).
+    private var harnessRow: some View {
+        let status = harnesses.status(for: subscription.harness)
+        return GridRow {
+            Text("harness").foregroundStyle(.secondary)
+            HStack(spacing: 0) {
+                Text(subscription.harness.displayName)
+                if let version = status.installation?.version {
+                    Text(" · \(subscription.harness.executableName) \(version.description)")
+                } else if status.installation == nil, harnesses.lastDetection != nil {
+                    Text(" · not installed").foregroundStyle(.secondary)
+                }
+                if status.isUpdateAvailable {
+                    Text(" · update available").foregroundStyle(Theme.accent)
+                }
+            }
+            .lineLimit(1)
         }
     }
 

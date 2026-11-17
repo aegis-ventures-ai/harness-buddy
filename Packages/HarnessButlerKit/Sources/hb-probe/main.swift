@@ -16,6 +16,24 @@ let forceLive = CommandLine.arguments.contains("--live")
 let offlineCodex = CommandLine.arguments.contains("--offline-codex")
 let claude = ClaudeUsageProvider()
 
+// --harnesses: detect installs and check latest versions (never runs an update).
+if CommandLine.arguments.contains("--harnesses") {
+    let store = HarnessStore(appVersion: "probe")
+    store.start(environment: environment)
+    try? await Task.sleep(for: .seconds(1))
+    await store.refresh(force: true)
+    for harness in Harness.allCases {
+        let status = store.status(for: harness)
+        guard let install = status.installation else { print("\n\(harness.displayName): not installed"); continue }
+        print("\n\(harness.displayName): \(install.binary.path(percentEncoded: false)) -> \(install.resolvedBinary.path(percentEncoded: false))")
+        print("  version: \(install.version.map(\.description) ?? "?")  (\(install.versionOutput ?? "no output"))  method: \(install.method.displayName)  channel: \(install.channel ?? "-")")
+        print("  latest: \(status.latest.map(\.description) ?? "?")  update available: \(status.isUpdateAvailable)  running: \(status.runningProcesses)")
+        print("  update command: \(status.updateCommand?.displayString ?? "none")\(status.checkError.map { "  error: \($0)" } ?? "")")
+    }
+    store.stop()
+    exit(0)
+}
+
 for subscription in subscriptions {
     let now = Date.now
     let env = offlineCodex && subscription.harness == .codex

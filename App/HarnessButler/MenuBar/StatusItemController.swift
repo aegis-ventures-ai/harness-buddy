@@ -3,17 +3,19 @@ import HarnessButlerKit
 import SwiftUI
 
 /// The menubar item: percent mode (M-2), status colours with a glyph (M-3),
-/// left-click popover and right-click menu (M-5), tooltip (M-6).
+/// left-click popover and right-click menu (M-5), tooltip (M-6), update badge (M-4).
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let store: UsageStore
+    private let harnesses: HarnessStore
     private let openSettings: () -> Void
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private var clock: Timer?
     let menuBarState = MenuBarState()
 
-    init(store: UsageStore, openSettings: @escaping () -> Void) {
+    init(store: UsageStore, harnesses: HarnessStore, openSettings: @escaping () -> Void) {
         self.store = store
+        self.harnesses = harnesses
         self.openSettings = openSettings
         super.init()
 
@@ -22,6 +24,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.delegate = self
         popover.contentViewController = NSHostingController(rootView: PopoverView(
             store: store,
+            harnesses: harnesses,
             openSettings: { [weak self] in self?.closePopoverThen(openSettings) }
         ))
 
@@ -36,6 +39,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         observeStore()
         NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateVisibility() }
+        }
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.render() }
         }
         // Countdowns and pace move with time even when data doesn't.
         clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -57,17 +63,24 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         let now = Date.now
         let pinned = store.pinned
-        let title = MenuBarTitle.attributedString(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now)
-        if title.length == 0 {
-            button.attributedTitle = NSAttributedString()
+        let title = NSMutableAttributedString(attributedString: MenuBarTitle.attributedString(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now))
+        let updates = harnesses.updatesAvailable
+        if !updates.isEmpty, AppSettings.showUpdateBadge {
+            title.append(MenuBarTitle.updateBadge())
+        }
+        if pinned.isEmpty {
             button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Harness Butler")
         } else {
             button.image = nil
-            button.attributedTitle = title
         }
+        button.attributedTitle = title
         menuBarState.width = button.intrinsicContentSize.width
         updateVisibility()
-        button.toolTip = MenuBarTitle.tooltip(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now)
+        var tooltip = MenuBarTitle.tooltip(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now) ?? ""
+        for harness in updates {
+            tooltip += "\nUpdate available: \(harness.displayName) \(harnesses.status(for: harness).latest.map(\.description) ?? "")"
+        }
+        button.toolTip = tooltip
         button.setAccessibilityLabel(button.toolTip ?? "Harness Butler")
     }
 
@@ -87,6 +100,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// `--open-popover`: show the popover at launch (for screenshots and UI checks).
     func openPopoverForDebugging() {
         guard let button = statusItem.button, !popover.isShown else { return }
+        popover.behavior = .applicationDefined // stays open for screenshots; click the item to close
         togglePopover(button)
     }
     #endif
@@ -188,6 +202,13 @@ enum MenuBarTitle {
         let y = (font.capHeight - image.size.height) / 2
         attachment.bounds = CGRect(x: 0, y: y, width: image.size.width, height: image.size.height)
         return NSAttributedString(attachment: attachment)
+    }
+
+    /// M-4: a small accent dot after the title.
+    static func updateBadge() -> NSAttributedString {
+        let result = NSMutableAttributedString(string: "\u{2009}")
+        result.append(symbol("circle.fill", color: NSColor(hex: 0x8FB4F2), font: NSFont.systemFont(ofSize: NSFont.systemFontSize), size: 6))
+        return result
     }
 
     /// M-6 tooltip and VoiceOver label: name, % left, reset per pinned subscription.

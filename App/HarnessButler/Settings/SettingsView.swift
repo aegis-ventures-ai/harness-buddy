@@ -9,6 +9,7 @@ enum SettingsTab: String, Hashable {
 /// Harness config pages (C-1…) arrive in M3.
 struct SettingsView: View {
     let store: UsageStore
+    let harnesses: HarnessStore
     let menuBar: MenuBarState
     @State var tab: SettingsTab = .subscriptions
 
@@ -201,6 +202,7 @@ private struct AboutSettings: View {
 private struct MenuBarSettings: View {
     let store: UsageStore
     let menuBar: MenuBarState
+    @AppStorage(AppSettings.showUpdateBadgeKey) private var showUpdateBadge = true
 
     var body: some View {
         Form {
@@ -211,6 +213,7 @@ private struct MenuBarSettings: View {
                     ))
                 }
                 LabeledContent("Width", value: "\(Int(menuBar.width.rounded())) pt")
+                Toggle("Show a dot when a harness update is available", isOn: $showUpdateBadge)
                 if menuBar.isLikelyHidden {
                     Label("macOS appears to be hiding the menubar item because it doesn't fit. Unpin some subscriptions or remove other menubar items.",
                           systemImage: "eye.slash")

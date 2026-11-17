@@ -27,6 +27,11 @@ public final class ChildProcessRegistry: Sendable {
     }
 
     var liveCount: Int { processes.withLock { $0.count } }
+
+    /// PIDs of our own live children (excluded from "sessions running" counts).
+    public var pids: Set<pid_t> {
+        processes.withLock { Set($0.values.map(\.processIdentifier)) }
+    }
 }
 
 /// SIGTERM, then SIGKILL after a grace period if the process is still running.

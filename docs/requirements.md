@@ -183,8 +183,8 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
 ## 8. Milestones (proposed)
 
 1. **M0 — Spikes: ✅ done 2026-11-17.** See `docs/spikes/01–04`.
-2. **M1 — Usage MVP:** discovery, popover with groups/bars/pace, pinning, percent menubar mode, Claude + Codex + **Grok** (moved up from M4).
-3. **M2 — Updates:** detection, version sources, one-click update with log.
+2. **M1 — Usage MVP: ✅ done 2026-11-17.** Discovery, popover with groups/bars/pace, pinning, percent menubar mode, Claude + Codex + **Grok** (moved up from M4), passive fallbacks, snapshot cache, menubar width warning.
+3. **M2 — Updates (in progress):** detection, version sources, one-click update with log. Implemented: H-1…H-4, M-4, and H-7 (count of running harness processes). Open: H-5 release notes, H-6 notification.
 4. **M3 — Config:** settings window, curated forms + MCP for all three, raw editor, diff/backup/restore. Productionising `ConfigEdit` is estimated at 12–14 engineer-days.
 5. **M4 — API spend + polish:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, worst-of and mini-bar menubar modes.
 
