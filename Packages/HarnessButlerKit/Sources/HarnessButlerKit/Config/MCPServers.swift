@@ -189,3 +189,40 @@ public struct MCPServerMapping: Sendable {
         return [.set(["disabled_mcp_servers"], .strings(list.filter { $0 != name }))]
     }
 }
+
+// MARK: - Copying between harnesses (C-9)
+
+/// What copying a server into another profile would stage.
+public struct MCPCopyPlan: Sendable {
+    /// The server as it will be written.
+    public var server: MCPServer
+    public var operations: [ConfigOperation]
+    /// What doesn't carry over, in plain words.
+    public var notes: [String]
+}
+
+extension MCPServerMapping {
+    /// Plan copying `server` (read from any harness) into `document`, this mapping's file.
+    /// Throws when the target can't hold it: an unsupported transport or a name that's taken.
+    public func copyPlan(_ server: MCPServer, into document: ConfigDocument, as name: String? = nil) throws -> MCPCopyPlan {
+        var copy = server
+        copy.name = (name ?? server.name).trimmingCharacters(in: .whitespaces)
+        copy.otherKeys = []
+        guard transports.contains(copy.transport) else {
+            throw ConfigEditError("\(harness.displayName) doesn't support \(copy.transport.rawValue.uppercased()) servers.")
+        }
+        if let error = copy.validationErrors.first { throw ConfigEditError(error + ".") }
+        if servers(in: document).contains(where: { $0.name == copy.name }) {
+            throw ConfigEditError("\(harness.displayName) already has a server named \(copy.name). Choose another name.")
+        }
+        var notes: [String] = []
+        if !server.otherKeys.isEmpty {
+            notes.append("Not copied: \(server.otherKeys.joined(separator: ", ")). These settings are specific to the source harness.")
+        }
+        if !server.isEnabled, !supportsDisabling {
+            copy.isEnabled = true
+            notes.append("\(harness.displayName) has no off switch for user servers, so the copy is on.")
+        }
+        return MCPCopyPlan(server: copy, operations: operations(from: nil, to: copy, document: document), notes: notes)
+    }
+}

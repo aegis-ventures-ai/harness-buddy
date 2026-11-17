@@ -7,6 +7,7 @@ enum ConfigTab: String, CaseIterable, Identifiable {
     case permissions = "Permissions"
     case mcp = "MCP servers"
     case env = "Env"
+    case extensions = "Extensions"
     case raw = "Raw"
     case backups = "Backups"
     var id: String { rawValue }
@@ -26,7 +27,7 @@ struct ProfileConfigView: View {
 
     private static var initialTab: ConfigTab {
         #if DEBUG
-        // `--config-tab mcp|env|raw|backups|permissions` (UI checks).
+        // `--config-tab mcp|env|extensions|raw|backups|permissions` (UI checks).
         if let index = CommandLine.arguments.firstIndex(of: "--config-tab"),
            let name = CommandLine.arguments.dropFirst(index + 1).first,
            let tab = ConfigTab.allCases.first(where: { $0.rawValue.lowercased().hasPrefix(name.lowercased()) }) { return tab }
@@ -55,6 +56,7 @@ struct ProfileConfigView: View {
                 case .permissions: ConfigPermissionsView(profile: profile, config: config)
                 case .mcp: MCPServersView(profile: profile, config: config)
                 case .env: ConfigEnvView(profile: profile, config: config)
+                case .extensions: ExtensionsView(profile: profile, config: config)
                 case .raw: RawConfigView(profile: profile, config: config)
                 case .backups: ConfigBackupsView(profile: profile, config: config)
                 }

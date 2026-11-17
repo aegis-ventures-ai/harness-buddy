@@ -40,6 +40,21 @@ if CommandLine.arguments.contains("--config") {
     exit(0)
 }
 
+// --extensions: the read-only hooks / plugins / skills inventory (C-8). Prints counts and
+// event names only, never commands or descriptions.
+if CommandLine.arguments.contains("--extensions") {
+    for profile in ConfigProfile.profiles(for: subscriptions, homeDirectory: home) {
+        let inventory = ExtensionsScanner.scan(profile, homeDirectory: home)
+        print("\n\(profile.harness.displayName) · \(PathExpansion.abbreviate(profile.home.path(percentEncoded: false), homeDirectory: home))")
+        print("  hooks: \(inventory.hooks.count) (events: \(Set(inventory.hooks.map(\.event)).sorted().joined(separator: ", ")))")
+        print("  plugins: \(inventory.plugins.count) (enabled \(inventory.plugins.count { $0.isEnabled == true }), with version \(inventory.plugins.count { $0.version != nil }))")
+        let origins = Dictionary(grouping: inventory.skills, by: \.origin).map { "\($0.key): \($0.value.count)" }.sorted()
+        print("  skills: \(inventory.skills.count) (broken \(inventory.skills.count(where: \.isBroken)), described \(inventory.skills.count { !$0.description.isEmpty })) \(origins.joined(separator: ", "))")
+        for problem in inventory.problems { print("  ✗ \(problem.prefix(200))") }
+    }
+    exit(0)
+}
+
 // --harnesses: detect installs and check latest versions (never runs an update).
 if CommandLine.arguments.contains("--harnesses") {
     let store = HarnessStore(appVersion: "probe")

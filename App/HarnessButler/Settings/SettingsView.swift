@@ -74,6 +74,7 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 820, minHeight: 540)
+        .environment(navigation)
         .onAppear { config.setSubscriptions(store.subscriptions) }
         .onChange(of: store.subscriptions) { _, new in config.setSubscriptions(new) }
     }

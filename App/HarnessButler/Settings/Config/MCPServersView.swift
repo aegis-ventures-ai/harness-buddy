@@ -7,6 +7,8 @@ struct MCPServersView: View {
     let config: ConfigStore
     @State private var editing: EditTarget?
     @State private var removing: MCPServer?
+    @State private var copying: MCPServer?
+    @Environment(SettingsNavigation.self) private var navigation
 
     struct EditTarget: Identifiable {
         var original: MCPServer?
@@ -46,11 +48,14 @@ struct MCPServersView: View {
                     TableColumn("") { server in
                         HStack {
                             Button("Edit") { editing = EditTarget(original: server) }
+                            Button { copying = server } label: { Image(systemName: "doc.on.doc") }
+                                .help("Copy \(server.name) to another profile or harness")
+                                .disabled(config.profiles.count < 2)
                             Button { removing = server } label: { Image(systemName: "trash") }.help("Remove \(server.name)")
                         }
                         .buttonStyle(.borderless)
                     }
-                    .width(80)
+                    .width(105)
                 }
                 .overlay {
                     if servers.isEmpty { Text("No user-scope MCP servers.").foregroundStyle(.secondary) }
@@ -67,6 +72,11 @@ struct MCPServersView: View {
                         config.apply(mapping.operations(from: target.original, to: new, document: document), in: ref)
                     }
                 }
+                .sheet(item: $copying) { server in
+                    MCPCopySheet(server: server, source: profile, config: config) { target in
+                        navigation.page = .profile(target.id)
+                    }
+                }
                 .confirmationDialog("Remove \(removing?.name ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
                     Button("Remove", role: .destructive) {
                         if let removing { config.apply(mapping.operations(from: removing, to: nil, document: document), in: ref) }
@@ -78,6 +88,15 @@ struct MCPServersView: View {
             }
         }
         .padding(.horizontal, 20)
+        #if DEBUG
+        .task {
+            // `--demo-copy`: open the copy sheet for the first server (UI checks; nothing is staged).
+            guard CommandLine.arguments.contains("--demo-copy") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            let mapping = MCPServerMapping.forHarness(profile.harness)
+            copying = profile.file(mapping.file).flatMap(config.document).flatMap { mapping.servers(in: $0).first }
+        }
+        #endif
     }
 }
 
@@ -150,5 +169,101 @@ private struct MCPServerEditor: View {
         var errors = server.validationErrors
         if server.name != original?.name, existingNames.contains(server.name) { errors.append("A server named \(server.name) already exists") }
         return errors
+    }
+}
+
+/// C-9: copy a server to another profile (same or another harness). The copy is staged in the
+/// target's file and saved from that profile's page after review.
+private struct MCPCopySheet: View {
+    let server: MCPServer
+    let source: ConfigProfile
+    let config: ConfigStore
+    let reveal: (ConfigProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var targetID: String?
+    @State private var name = ""
+    @State private var copied: MCPCopyPlan?
+    @State private var failure: String?
+
+    private var targets: [ConfigProfile] { config.profiles.filter { $0.id != source.id } }
+    private var target: ConfigProfile? { targets.first { $0.id == targetID } }
+
+    /// A pure read: the target's file is loaded by the `.task` below, not during view updates.
+    private var plan: Result<MCPCopyPlan, ConfigEditError>? {
+        guard let target else { return nil }
+        guard let ref = config.mcpFile(of: target), let document = config.document(ref) else {
+            return config.mcpFile(of: target).flatMap { config.errors[$0.id] }.map { .failure(ConfigEditError($0)) }
+        }
+        do { return .success(try MCPServerMapping.forHarness(target.harness).copyPlan(server, into: document, as: name)) }
+        catch let error as ConfigEditError { return .failure(error) }
+        catch { return .failure(ConfigEditError("\(error)")) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Copy \(server.name)").font(.headline)
+            if let copied, let target {
+                Label("Staged in \(target.displayName) (\(target.harness.displayName)). Review and save it on that profile's page.",
+                      systemImage: "checkmark.circle")
+                    .foregroundStyle(Theme.ok)
+                notes(copied.notes)
+                HStack {
+                    Spacer()
+                    Button("Done") { dismiss() }
+                    Button("Go to \(target.displayName)") { dismiss(); reveal(target) }.keyboardShortcut(.defaultAction)
+                }
+            } else {
+                Form {
+                    Picker("To", selection: $targetID) {
+                        ForEach(Harness.allCases) { harness in
+                            let profiles = targets.filter { $0.harness == harness }
+                            if !profiles.isEmpty {
+                                Section(harness.displayName) {
+                                    ForEach(profiles) { Text("\($0.displayName) · \(PathFormatting.abbreviate($0.home.path(percentEncoded: false)))").tag(Optional($0.id)) }
+                                }
+                            }
+                        }
+                    }
+                    TextField("Name", text: $name)
+                }
+                .formStyle(.columns)
+                switch plan {
+                case .failure(let error)?:
+                    Label(error.message, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.warn)
+                case .success(let plan)?:
+                    notes(plan.notes)
+                    if plan.notes.isEmpty { Text("Every setting carries over.").foregroundStyle(.secondary) }
+                case nil:
+                    EmptyView()
+                }
+                if let failure { Text(failure).foregroundStyle(Theme.bad) }
+                HStack {
+                    Text("Nothing is written until you review and save.").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button("Copy") {
+                        guard let target else { return }
+                        do { copied = try config.copy(server, to: target, as: name) } catch { failure = "\(error)" }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!(plan.map { if case .success = $0 { true } else { false } } ?? false))
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .onAppear {
+            name = server.name
+            // Prefer another harness: that's what copying is mostly for.
+            targetID = (targets.first { $0.harness != source.harness } ?? targets.first)?.id
+        }
+        .task(id: targetID) {
+            if let target { config.open(target) }
+        }
+    }
+
+    @ViewBuilder
+    private func notes(_ notes: [String]) -> some View {
+        ForEach(notes, id: \.self) { Label($0, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary) }
     }
 }

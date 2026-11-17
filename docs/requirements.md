@@ -185,19 +185,42 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
 1. **M0 — Spikes: ✅ done 2026-11-17.** See `docs/spikes/01–04`.
 2. **M1 — Usage MVP: ✅ done 2026-11-17.** Discovery, popover with groups/bars/pace, pinning, percent menubar mode, Claude + Codex + **Grok** (moved up from M4), passive fallbacks, snapshot cache, menubar width warning.
 3. **M2 — Updates ✅ done:** detection, version sources, one-click update with log. Implemented: H-1…H-7 and M-4. H-5 shows the notes for every version after the installed one, up to the latest (collapsed to four bullets, expandable, with a link to the full notes). H-6 is off by default, asks for notification permission when it is turned on, announces each version once, and opens the harnesses page when clicked.
-4. **M3 — Config (in progress):** settings window, curated forms + MCP for all three, raw editor, diff/backup/restore. Productionising `ConfigEdit` is estimated at 12–14 engineer-days.
+4. **M3 — Config ✅ done 2026-11-17:** a settings window, curated forms and MCP servers for all three harnesses, a raw editor, and diff/backup/restore.
    - Implemented:
-     - The spike's `ConfigEdit` code moved into the Kit (`Config/Edit`). The scanner now enforces TOML 1.0, rejecting multi-line or trailing-comma inline tables and the `\e`/`\x` escapes.
+     - The spike's `ConfigEdit` code moved into the Kit (`Config/Edit`). The scanner enforces TOML 1.0, rejecting:
+       - multi-line or trailing-comma inline tables;
+       - the `\e`/`\x` escapes;
+       - times without seconds.
      - C-1: a settings sidebar with one page per harness profile.
      - C-2: the General tab, plus per-model effort for Claude, Claude's allow/ask/deny rules, and an Env tab.
      - C-3: add, edit, enable/disable and remove MCP servers. Edits are field-level, so keys we don't model survive.
-     - C-4: the raw editor, validated as you type. It isn't offered for `.claude.json`.
-     - C-5: diff review → outside-change check → 0600 backup → atomic write → read-back check. Restore is one click. `.claude.json` writes take the CLI's own lock, re-apply only `mcpServers`, and diff only that key.
+     - C-4: the raw editor, validated as you type. It isn't offered for `.claude.json`. Syntax errors show the line and column.
+     - C-5: the save path, in this order:
+       - diff review;
+       - an outside-change check;
+       - a 0600 backup;
+       - an atomic write;
+       - a read-back check.
+     - C-5, continued: restore is one click. `.claude.json` writes take the CLI's own lock, re-apply only `mcpServers`, and diff only that key.
      - C-6, C-7 (file watching, plus reload or re-apply after an outside change), C-10, C-11 and C-12.
-   - Open:
-     - C-8: read-only hooks and plugins (P1).
-     - C-9: copy an MCP server to another harness (P2).
-     - Hardening from spike 04: the toml-test corpus, property tests, an xattr policy, and refreshing the lock mtime while holding it.
+     - C-8: a read-only Extensions tab listing user-level hooks, plugins and skills. Sources per harness:
+       - Claude: `settings.json` hooks and `enabledPlugins`, user-scope `installed_plugins.json` versions, `skills/`.
+       - Codex: `notify`, `hooks.json`, `[plugins]`, `skills/` and the bundled `.system` skills.
+       - Grok: `[[hooks.*]]`, `hooks/*.json`, the `[plugins]` lists, `skills/` and `~/.agents/skills`.
+       - It flags dangling skill links and folders without a `SKILL.md`.
+     - C-9: "Copy to…" on an MCP server stages it in another profile of any harness.
+       - Unsupported transports (Codex has no SSE) and name clashes are refused before staging; you can rename to resolve a clash.
+       - Harness-specific keys that don't carry over are listed.
+       - Like any edit, the copy is written only after review and save.
+     - Hardening from spike 04:
+       - The toml-test 1.0 corpus. All 208 valid files round-trip byte for byte, and every key in them can be edited in place. All 509 invalid files and the TOML 1.1-only cases are rejected.
+       - Seeded random edit sequences checked against a model. These found, and led to fixes for:
+         - removing or replacing tables whose sub-tables are not contiguous;
+         - a scalar replacing a table;
+         - edits inside inline tables.
+       - xattrs and ACLs are copied across the rename.
+       - The lock's mtime is refreshed while it is held.
+       - JSON: a BOM is accepted, duplicate keys resolve last-wins, and nesting depth is capped.
 5. **M4 — API spend + polish:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, worst-of and mini-bar menubar modes.
 
 ## 9. Risks

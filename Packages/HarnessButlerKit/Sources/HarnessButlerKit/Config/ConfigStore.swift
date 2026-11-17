@@ -165,6 +165,29 @@ public final class ConfigStore {
 
     public func clearError(_ ref: ConfigFileRef) { errors[ref.id] = nil }
 
+    /// The file holding `profile`'s MCP servers.
+    public func mcpFile(of profile: ConfigProfile) -> ConfigFileRef? {
+        profile.file(MCPServerMapping.forHarness(profile.harness).file, homeDirectory: homeDirectory)
+    }
+
+    /// C-9: plan copying `server` into `target`, loading (and watching) its files first.
+    public func copyPlan(_ server: MCPServer, to target: ConfigProfile, as name: String? = nil) throws -> MCPCopyPlan {
+        open(target)
+        guard let ref = mcpFile(of: target), let document = document(ref) else {
+            throw ConfigEditError(mcpFile(of: target).flatMap { errors[$0.id] } ?? "Couldn't read the target's config file.")
+        }
+        return try MCPServerMapping.forHarness(target.harness).copyPlan(server, into: document, as: name)
+    }
+
+    /// C-9: stage the copy in `target`'s file. Like any edit it's written only after review.
+    @discardableResult
+    public func copy(_ server: MCPServer, to target: ConfigProfile, as name: String? = nil) throws -> MCPCopyPlan {
+        let plan = try copyPlan(server, to: target, as: name)
+        guard let ref = mcpFile(of: target) else { throw ConfigEditError("No MCP file for \(target.displayName).") }
+        try stage(plan.operations, in: ref)
+        return plan
+    }
+
     /// Replace the whole file's text (C-4). Invalid text is kept in the buffer with an error and can't be saved.
     public func setRawText(_ text: String, in ref: ConfigFileRef) {
         guard ref.kind.allowsRawEditing, var state = files[ref.id] else { return }

@@ -21,9 +21,9 @@ make probe    # print one usage read per subscription, no UI (add --live via: cd
 
 The Xcode project is generated from `project.yml` and isn't committed. Run `make project` after pulling.
 
-`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback; `--config` parses each profile's config files in memory and prints whether they parse and round-trip, MCP server counts and which curated keys are set (no values; it never writes); `--harnesses` prints detected installs, latest versions and update commands (it never runs an update); add `--notes` to also fetch and print the release notes for each harness's latest version.
+`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback; `--config` parses each profile's config files in memory and prints whether they parse and round-trip, MCP server counts and which curated keys are set (no values; it never writes); `--extensions` prints counts of each profile's hooks, plugins and skills (event names only, never commands or descriptions); `--harnesses` prints detected installs, latest versions and update commands (it never runs an update); add `--notes` to also fetch and print the release notes for each harness's latest version.
 
-Debug-build launch flags (pass after `open … --args`): `--open-popover [harnesses]` opens the popover on launch (and keeps it open until you click the item); `--expand-notes` starts release notes expanded; `--open-settings [subscriptions|menubar|about|claude|codex|grok]` opens Settings on that page; `--config-tab general|permissions|mcp|env|raw|backups` picks the config tab; `--demo-pending` stages one harmless edit to the Grok config in memory (it's never saved) and `--demo-review` opens its diff, for UI checks.
+Debug-build launch flags (pass after `open … --args`): `--open-popover [harnesses]` opens the popover on launch (and keeps it open until you click the item); `--expand-notes` starts release notes expanded; `--open-settings [subscriptions|menubar|about|claude|codex|grok]` opens Settings on that page; `--config-tab general|permissions|mcp|env|extensions|raw|backups` picks the config tab; `--demo-pending` stages one harmless edit to the Grok config in memory (it's never saved) and `--demo-review` opens its diff; `--demo-copy` opens the MCP "Copy to…" sheet for the first server (nothing is staged unless you click Copy). All of these are for UI checks.
 
 ## Data the app keeps
 
@@ -52,7 +52,7 @@ Besides the providers' own usage endpoints, the app only makes unauthenticated G
 | `App/HarnessButler/` | AppKit status item + SwiftUI popover and settings. Thin: no business logic. |
 | `Packages/HarnessButlerKit/` | Subscriptions, usage providers, at-risk/pace rules, refresh scheduling, process and JSON-RPC plumbing. All unit-tested. |
 | `Packages/HarnessButlerKit/Sources/hb-probe/` | Dev CLI that runs the providers against your real harness logins. |
-| `spikes/config-edit/` | M0 prototype of the format-preserving TOML/JSON editor (becomes M3's `ConfigEdit`). |
+| `spikes/config-edit/` | M0 prototype of the format-preserving TOML/JSON editor (now `Config/Edit` in the Kit). |
 
 ## Distribution
 
