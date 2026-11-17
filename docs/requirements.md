@@ -1,6 +1,6 @@
-# Harness Butler — Scope & Requirements (draft v0.3)
+# Harness Butler — Scope & Requirements (draft v0.4)
 
-_Status: draft v0.3 · 2026-11-17 · round-3 answers applied; no open product questions_
+_Status: draft v0.4 · 2026-11-17 · M0 spike results folded in (see [`docs/spikes/`](spikes/))_
 
 A native macOS menubar app that shows, at a glance, how much of each AI coding subscription you have left, tells you when your local CLI harnesses are out of date, and lets you edit their configuration without hand-editing JSON/TOML.
 
@@ -69,7 +69,7 @@ Priority: **P0** = v1 must-have, **P1** = v1 if cheap / fast-follow, **P2** = la
 | U-9 | Detail view per subscription: all windows, 7-day history sparkline, source path, last refresh, harness version. | P0 |
 | U-10 | Locally persisted usage history (SQLite) for sparklines and trends. | P1 |
 | U-11 | Active session count per harness (from harness session/state files). | P1 |
-| U-12 | Refresh cadence: default 2 min while popover closed, 30 s while open, manual refresh; exponential backoff on errors. | P0 |
+| U-12 | Refresh cadence per source (from spikes): Claude and Codex every **5 min**; Grok every **10–15 min** (each poll spawns a short-lived `grok` process). On popover open, refresh any source older than 60 s (Grok: 5 min). Also refresh right after a window's reset time passes. Manual refresh is limited to once per 60 s per source. Honour `retry-after`, otherwise back off 5 → 10 → 30 min. Pause while asleep; back off on battery. | P0 |
 
 ### 4.2 Menubar
 
@@ -101,14 +101,15 @@ Priority: **P0** = v1 must-have, **P1** = v1 if cheap / fast-follow, **P2** = la
 | C-1 | Settings window with a sidebar entry per harness, and per config dir ("profile") under it, labelled with the subscription name bound to that dir. | P0 |
 | C-2 | Curated forms for common settings: default model, reasoning effort, approval/permission mode, permission allow/deny rules, env vars, auto-update flag. | P0 |
 | C-3 | MCP servers: list, add, edit, enable/disable, remove (user scope) for all three harnesses. | P0 |
-| C-4 | Raw editor tab for the underlying file with syntax validation. | P0 |
-| C-5 | Every write: diff preview → timestamped backup → atomic write → re-read to verify. One-click restore from backup. | P0 |
-| C-6 | Preserve formatting/comments and unknown keys (round-trip safe). TOML must be comment-preserving. | P0 |
+| C-4 | Raw editor tab for the underlying file with syntax validation. TOML validation must be **TOML 1.0-strict**: Codex rejects TOML 1.1, which our parser would otherwise accept. | P0 |
+| C-5 | Every write: diff preview → mtime/hash check against load → timestamped backup → atomic write (temp file in same dir + rename, permissions preserved) → re-read to verify. One-click restore from backup. For `.claude.json`, take Claude Code's own `.claude.json.lock` directory lock and re-read under it. Symlinks: write through to the target and keep the link. Warn on hard links (a rename-based write breaks them). | P0 |
+| C-6 | Preserve formatting/comments and unknown keys (round-trip safe). Implemented as an in-house span-based editor for TOML and JSON; every result is re-parsed by an independent parser, and edits it can't do safely fail loudly. Editing entries inside array tables (`[[…]]`, e.g. Grok `marketplace.sources`) is raw-editor-only in v1. | P0 |
 | C-7 | Watch files for external changes; if a file changed under an open editor, block save and offer reload/merge. | P0 |
 | C-8 | Read-only view of user-level hooks and plugins/skills. | P1 |
 | C-11 | Scope is user-level files only; project-level config files are never read or written. | P0 |
 | C-9 | Copy an MCP server definition from one harness to another. | P2 |
 | C-10 | Never read or write auth/credential files except the minimum read needed for usage (§5.1). | P0 |
+| C-12 | Backups are mode 0600 in a 0700 directory, because they can contain secrets from env blocks. | P0 |
 
 ### 4.5 Notifications (P1)
 
@@ -124,28 +125,28 @@ Verified on this machine unless marked _(verify)_.
 
 | Harness / source | Where the data comes from | Confidence |
 |---|---|---|
-| Claude Code (subscription) | OAuth access token from macOS Keychain item `Claude Code-credentials` (present). Call undocumented `GET api.anthropic.com/api/oauth/usage` → 5h / 7d / 7d-Opus utilisation + `resets_at`. Non-default `CLAUDE_CONFIG_DIR` uses a differently-suffixed Keychain item _(verify naming)_. | Medium — undocumented endpoint |
-| Codex (subscription) | **Passive:** latest `rate_limits` event in `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` — verified: `primary {used_percent, window_minutes:300, resets_at}`, `secondary {window_minutes:10080}`, `credits`. **Active:** `codex app-server` rate-limit read _(verify)_ or ChatGPT backend usage endpoint _(verify)_. Per-`CODEX_HOME`. | High (passive) / Medium (active) |
-| Grok Build (subscription) | `grok usage --json` exists ("plan's usage limit") but requires Grok's background **leader** service; it refused here. Options: talk to `~/.grok/leader.sock`, spawn the leader on demand, or fall back to "open grok to refresh". | **Low — spike needed** |
+| Claude Code (subscription) | **Passive:** `cachedUsageUtilization` (+ `fetchedAtMs`) in that dir's `.claude.json`, which the CLI keeps fresh while running. No Keychain or network access needed. **Active:** read the OAuth token by spawning `/usr/bin/security find-generic-password` (only `security` is on the item's ACL, so a direct Keychain API call would prompt). Then call the undocumented `GET api.anthropic.com/api/oauth/usage`, using its generic `limits[]` array plus `extra_usage`/`spend`. Keychain service is `Claude Code-credentials` for the default dir; with `CLAUDE_CONFIG_DIR` set, it is `Claude Code-credentials-` + the first 8 hex of sha256(path as given), account `$USER`. Plan comes from creds `subscriptionType`/`rateLimitTier`. | High (passive) / Medium (active, undocumented) |
+| Codex (subscription) | **Active:** spawn `codex app-server` (stdio JSON-RPC) per refresh, `initialize`, then `account/rateLimits/read` (5h + 7d windows, credits) and `account/read` (plan). Takes about 1 s; Codex handles its own token refresh, so the app never touches tokens. Kill the process afterwards; it peaks around 90 MB. **Passive fallback:** the latest `rate_limits` event in `$CODEX_HOME/sessions/**/rollout-*.jsonl`. Don't call `wham/usage` directly. `CODEX_HOME` = one subscription; `-p` profiles share a login. | High |
+| Grok Build (subscription) | Spawn `grok agent stdio` (ACP), `initialize`, then call the undocumented `_x.ai/billing` method → one **weekly** window (% used, period start/end) + plan name. Takes about 1.6 s; Grok refreshes its own token. Set `GROK_TELEMETRY_ENABLED=0` and `GROK_TELEMETRY_MIXPANEL_ENABLED=false`. `grok usage --json` fails for this account even with a leader running. The direct HTTP billing endpoint is a last resort, because the `auth.json` token lives only 6 h. `GROK_HOME` = one subscription. | Medium — undocumented ACP method |
 | Anthropic API | Admin API usage & cost reports (`sk-ant-admin…` key). | High — documented |
 | OpenAI API | Organization usage + costs endpoints (admin key). | High — documented |
 
-**Token-handling rule:** the app **never refreshes** harness OAuth tokens itself. Refresh tokens rotate; refreshing out-of-band can silently log the CLI out. If the access token is expired, mark the subscription *stale* with "run `claude` to refresh" (or trigger the harness's own non-interactive refresh if one exists).
+**Token-handling rule:** the app **never refreshes** harness OAuth tokens itself. For Codex and Grok the harness process the app spawns refreshes its own tokens, which is allowed because the harness does it under its own locks. Refresh tokens rotate; refreshing out-of-band can silently log the CLI out. If the access token is expired, mark the subscription *stale* with "run `claude` to refresh" (or trigger the harness's own non-interactive refresh if one exists).
 
 ### 5.2 Versions
 
 | Harness | Installed (here) | Install method (here) | Latest-version source | Update command |
 |---|---|---|---|---|
-| Claude Code | 2.1.326 | native (`~/.local/bin/claude`) | native release channel / npm `@anthropic-ai/claude-code` dist-tags | `claude update` |
-| Codex | 0.167.2 | Homebrew (`/opt/homebrew/bin/codex`) | Homebrew formula/cask JSON, GitHub releases `openai/codex`, or npm `@openai/codex` | `brew upgrade codex` / `npm i -g @openai/codex` |
-| Grok Build | 1.0.88 | self-installer (`~/.grok/bin/grok`) | `~/.grok/version.json` `stable_version` (fresh), or `grok update` check | `grok update` |
+| Claude Code | 2.1.326 | native (`~/.local/bin/claude`) | `https://downloads.claude.ai/claude-code-releases/{latest,stable}` (plain text, no auth); npm dist-tags for npm installs | `claude update` |
+| Codex | 0.167.2 (0.169.0 available) | Homebrew **cask** (resolved path contains `/Caskroom/codex/`) | `formulae.brew.sh/api/cask/codex.json` for cask installs; `registry.npmjs.org/@openai/codex/latest` for npm. Local `version.json` and `brew info` are both stale; don't use them. | `brew upgrade --cask codex` / `npm i -g @openai/codex` |
+| Grok Build | 1.0.88 | self-installer (`~/.grok/bin/grok`) | `https://x.ai/cli/{stable,alpha,enterprise}` (plain text, no auth). `version.json` is a hint only. | `grok update` |
 
 ### 5.3 Config files (v1 targets)
 
 | Harness | Files | Notes |
 |---|---|---|
-| Claude Code | `~/.claude/settings.json` (model, permissions, env, hooks, plugins, outputStyle); `~/.claude.json` (user-scope MCP servers) | `~/.claude.json` is also live CLI state, written frequently → merge-write only the `mcpServers` key, with change detection. |
-| Codex | `~/.codex/config.toml` (model, reasoning effort, approval policy, sandbox, `[mcp_servers.*]`, `[profiles.*]`) | Needs comment-preserving TOML editing. |
+| Claude Code | `~/.claude/settings.json` (model, permissions, env, hooks, plugins, outputStyle); `~/.claude.json` (user-scope MCP servers). With `CLAUDE_CONFIG_DIR` set, **both** live inside that dir. | `.claude.json` is also live CLI state that the CLI rewrites whole under a `.claude.json.lock` dir lock. Take the same lock and merge-write only `mcpServers`. It also contains identity fields; read only the keys we need. |
+| Codex | `$CODEX_HOME/config.toml` (model, reasoning effort, approval policy, sandbox, `[mcp_servers.*]`, `[profiles.*]`) | Format-preserving TOML editing; TOML 1.0-strict validation. |
 | Grok Build | `~/.grok/config.toml` (`[cli] auto_update`, `[ui]`, model, MCP servers) | Same TOML requirement; `grok inspect` can show effective config. |
 
 ## 6. Non-functional requirements
@@ -155,7 +156,8 @@ Verified on this machine unless marked _(verify)_.
 - **Safety:** read-only by default for everything except explicit config saves and update actions. Backups kept for 30 days.
 - **Resilience:** one provider failing never blanks the others; each row shows its own error state and last-good data with age.
 - **Appearance:** follows system light/dark; monospace, terminal-inspired look (see mockups); full VoiceOver labels for bars ("Claude Code work, weekly all models, 84 percent left, resets in 3 days").
-- **Distribution:** signed + notarized DMG via GitHub Releases for the team; Sparkle for self-update (P1).
+- **Distribution:** **non-sandboxed** app (Developer ID, Hardened Runtime, notarized). The sandbox would block spawning `/usr/bin/security` and the harness CLIs, and reading their home dirs. Signed DMG via GitHub Releases for the team; Sparkle for self-update (P1).
+- **Child processes:** every spawned harness process (`codex app-server`, `grok agent stdio`, `security`) has a timeout, is killed after use, and never outlives the app.
 - **Minimum OS:** macOS 27. No back-deployment shims; use current SwiftUI, Observation, and Swift concurrency APIs freely, and adopt the current system design language for materials and controls.
 
 ## 7. Architecture sketch
@@ -164,14 +166,15 @@ Verified on this machine unless marked _(verify)_.
 HarnessButlerApp (SwiftUI MenuBarExtra + Settings scene)
 ├── UsageStore (@Observable) ── Poller (per-subscription schedule, backoff)
 │     └── UsageProvider protocol
-│           ├── ClaudeOAuthUsageProvider   (Keychain → /api/oauth/usage)
-│           ├── CodexRolloutUsageProvider  (tail rollout jsonl; app-server later)
-│           ├── GrokLeaderUsageProvider    (spike)
+│           ├── ClaudeUsageProvider        (.claude.json cache → security + /api/oauth/usage)
+│           ├── CodexAppServerUsageProvider (app-server rateLimits → rollout jsonl fallback)
+│           ├── GrokACPUsageProvider       (grok agent stdio → _x.ai/billing)
 │           ├── AnthropicAdminUsageProvider / OpenAIAdminUsageProvider
 ├── HarnessStore ── HarnessDetector (path, version, install method)
 │                └── VersionSource per method; Updater (Process + streamed output)
 ├── ConfigStore ── ConfigAdapter protocol (Claude JSON, Codex TOML, Grok TOML)
-│                └── FileWatcher, BackupManager, DiffService
+│                ├── ConfigEdit (span-based TOML/JSON editor; prototype in spikes/config-edit)
+│                └── SafeFileWriter, FileWatcher, BackupManager, DiffService
 └── HistoryDB (SQLite via GRDB)
 ```
 
@@ -179,21 +182,24 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
 
 ## 8. Milestones (proposed)
 
-1. **M0 — Spikes (≈2–3 days):** Claude multi-config-dir Keychain naming; Codex active rate-limit read; Grok leader/usage; comment-preserving TOML in Swift.
-2. **M1 — Usage MVP:** discovery, popover with groups/bars/pace, pinning, percent + worst-of menubar modes, Claude + Codex.
+1. **M0 — Spikes: ✅ done 2026-11-17.** See `docs/spikes/01–04`.
+2. **M1 — Usage MVP:** discovery, popover with groups/bars/pace, pinning, percent menubar mode, Claude + Codex + **Grok** (moved up from M4).
 3. **M2 — Updates:** detection, version sources, one-click update with log.
-4. **M3 — Config:** settings window, curated forms + MCP for all three, raw editor, diff/backup/restore.
-5. **M4 — API spend + polish:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, Grok usage (depending on spike), worst-of and mini-bar menubar modes.
+4. **M3 — Config:** settings window, curated forms + MCP for all three, raw editor, diff/backup/restore. Productionising `ConfigEdit` is estimated at 12–14 engineer-days.
+5. **M4 — API spend + polish:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, worst-of and mini-bar menubar modes.
 
 ## 9. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Undocumented usage endpoints change/break | Rows go stale | Adapter isolation, passive fallbacks (Codex rollout files), clear stale state, fast patch releases |
+| Undocumented usage endpoints/methods change (Claude `/api/oauth/usage`, Grok `_x.ai/billing`; Codex `app-server` is labelled experimental) | Rows go stale | Adapter isolation, passive fallbacks (Claude `.claude.json` cache, Codex rollout files), clear stale state, fast patch releases |
 | Out-of-band token refresh logs user out of a CLI | High annoyance | Never refresh; read-only token use (§5.1) |
 | Corrupting a harness config | High | Round-trip-safe parsers, diff, backups, atomic writes, external-change detection |
-| Grok plan usage not accessible headlessly | Grok row has limited data | Spike in M0; fallback to "open grok" + versions/config only |
-| Concurrent writes to `~/.claude.json` by running CLI | Lost changes | Key-scoped merge, mtime/hash check immediately before write, retry |
+| Spawning harness processes for usage | CPU/RAM spikes (~90–150 MB briefly), cache writes in harness homes, Grok telemetry | Conservative cadence (U-12), kill after use, telemetry env vars off, single in-flight poll per source |
+| Dependence on `/usr/bin/security` and non-sandboxed distribution | Can't ship via App Store; breaks if Claude changes its Keychain ACL | Acceptable for an internal tool; passive `.claude.json` source as fallback |
+| Identity data in `.claude.json` and Keychain item (email, org, other services' MCP tokens) | Privacy | Read only needed keys; drop everything else in memory; never persist tokens |
+| Users signed in with a long-lived token have no Keychain item | No active Claude data | Fall back to the passive cache; show "active refresh unavailable" |
+| Concurrent writes to `~/.claude.json` by running CLI | Lost changes | Take the CLI's `.claude.json.lock`, re-read under lock, key-scoped merge, hash check, retry |
 
 ## 10. Decision log
 
@@ -213,4 +219,7 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
 
 ## 11. Open questions
 
-No open product questions. Remaining unknowns are technical and are covered by the M0 spikes (§8).
+No open product questions. Technical follow-ups from M0:
+1. Re-test the Codex token-expiry path after the current token expires; test multi-workspace ChatGPT logins and npm installs.
+2. Verify Grok `active_sessions.json` liveness (`pid` + `pid_start`) against a live session, and that auth/sessions follow `GROK_HOME`.
+3. Confirm Claude's real-expired-token error (only a bogus token was tested).
