@@ -37,6 +37,43 @@ import Testing
         #expect(!alive)
     }
 
+    /// Reads the pid a test child wrote, then waits until that process is gone.
+    func descendantStops(pidFile: URL) async throws -> Bool {
+        let text = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(text))
+        for _ in 0..<60 {
+            if kill(pid, 0) != 0 { return true }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        kill(pid, SIGKILL)
+        return false
+    }
+
+    @Test func descendantsWithTheirOwnOutputStopWhenTheCommandExits() async throws {
+        // A helper that redirects its output never holds our pipe; it must still not outlive the command.
+        let pidFile = FileManager.default.temporaryDirectory.appending(path: "hb-desc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let script = "/usr/bin/tail -f /dev/null </dev/null >/dev/null 2>&1 & echo $! > \"$0\"; exit 0"
+        _ = try await ProcessRunner.run(sh, arguments: ["-c", script, pidFile.path(percentEncoded: false)])
+        #expect(try await descendantStops(pidFile: pidFile))
+
+        _ = try await StreamingProcess.run(sh, arguments: ["-c", script, pidFile.path(percentEncoded: false)], environment: [:]) { _ in }
+        #expect(try await descendantStops(pidFile: pidFile))
+    }
+
+    @Test func jsonRPCChildThatExitsTakesItsHelpersWithIt() async throws {
+        let pidFile = FileManager.default.temporaryDirectory.appending(path: "hb-desc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let session = try LineJSONRPCSession(
+            executable: sh,
+            arguments: ["-c", "/usr/bin/tail -f /dev/null </dev/null >/dev/null 2>&1 & echo $! > \"$0\"; read x; exit 4", pidFile.path(percentEncoded: false)],
+            environment: [:], includeVersionField: false, timeout: .seconds(5)
+        )
+        defer { session.close() }
+        await #expect(throws: JSONRPCSessionError.processExited(4)) { _ = try await session.request("initialize") }
+        #expect(try await descendantStops(pidFile: pidFile))
+    }
+
     @Test func streamingDoesNotWaitForADescendantHoldingThePipe() async throws {
         let start = ContinuousClock.now
         let result = try await StreamingProcess.run(sh, arguments: ["-c", "echo started; /usr/bin/tail -f /dev/null & exit 0"], environment: [:]) { _ in }

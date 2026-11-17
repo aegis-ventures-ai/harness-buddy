@@ -117,3 +117,21 @@ import Testing
         }
     }
 }
+
+@Suite struct PrivateWriteTests {
+    @Test func appDataFilesArePrivateAndReplacedWhole() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "hb-private-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createPrivateDirectory(at: directory)
+        let url = directory.appending(path: "data.json")
+        try Data("first".utf8).writePrivately(to: url)
+        // Even a file that was readable by others ends up 0600 after the next save.
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path(percentEncoded: false))
+        try Data("second".utf8).writePrivately(to: url)
+        let mode = (try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.posixPermissions] as? NSNumber)?.intValue
+        #expect(mode == 0o600)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "second")
+        // No temp files are left beside it.
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false)) == ["data.json"])
+    }
+}

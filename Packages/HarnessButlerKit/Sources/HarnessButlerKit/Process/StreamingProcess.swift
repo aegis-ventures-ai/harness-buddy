@@ -42,7 +42,7 @@ public enum StreamingProcess {
                     // Bounded: a descendant holding the pipe open would otherwise block this forever.
                     let rest = drainPipe(pipe.fileHandleForReading, timeout: 2)
                     if !rest.data.isEmpty, let text = decoder.decode(rest.data) { onOutput(text) }
-                    if !rest.eof { killGroup(of: finished.processIdentifier, SIGKILL) }
+                    reapGroup(of: finished.processIdentifier)
                     if let tail = decoder.flush() { onOutput(tail) }
                     ChildProcessRegistry.shared.unregister(finished)
                     let state = flags.withLock { $0 }

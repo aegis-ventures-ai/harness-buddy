@@ -61,6 +61,7 @@ public final class LineJSONRPCSession: Sendable {
             if data.isEmpty { handle.readabilityHandler = nil } else { self?.receive(data) }
         }
         process.terminationHandler = { [weak self] finished in
+            reapGroup(of: finished.processIdentifier)
             ChildProcessRegistry.shared.unregister(finished)
             self?.failAll(exitCode: finished.terminationStatus)
         }

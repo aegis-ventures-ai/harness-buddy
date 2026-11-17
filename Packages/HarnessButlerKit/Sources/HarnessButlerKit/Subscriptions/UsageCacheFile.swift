@@ -43,9 +43,8 @@ public struct UsageCacheFile: Sendable {
 
     public func save(_ snapshots: [UUID: UsageSnapshot], retries: [UUID: RetryRecord] = [:]) throws {
         try FileManager.default.createPrivateDirectory(at: url.deletingLastPathComponent())
-        try JSONEncoder.cache.encode(Payload(snapshots: snapshots, retries: retries.isEmpty ? nil : retries)).write(to: url, options: [.atomic])
         // Private to the user, like the rest of the app's data (spend totals, budgets).
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
+        try JSONEncoder.cache.encode(Payload(snapshots: snapshots, retries: retries.isEmpty ? nil : retries)).writePrivately(to: url)
     }
 }
 
@@ -62,6 +61,27 @@ public struct RetryRecord: Codable, Hashable, Sendable {
         self.failures = failures
         self.blockedUntil = blockedUntil
         self.issue = issue
+    }
+}
+
+extension Data {
+    /// Writes atomically with mode 0600 from the start: a temp file from mkstemp (always 0600) in the
+    /// same folder, fsync, rename. `.atomic` would create it with the umask's mode first.
+    public func writePrivately(to url: URL) throws {
+        let path = url.path(percentEncoded: false)
+        var template = Array("\(path).hb-XXXXXX".utf8CString)
+        let fd = mkstemp(&template)
+        guard fd >= 0 else { throw SafeWriteError.posix("mkstemp", errno) }
+        let tmp = String(decoding: template.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        var renamed = false
+        defer { if !renamed { unlink(tmp) } }
+        do {
+            defer { close(fd) }
+            try SafeFileWriter.writeAll([UInt8](self), to: fd)
+            guard fchmod(fd, 0o600) == 0, fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
+        }
+        guard rename(tmp, path) == 0 else { throw SafeWriteError.posix("rename", errno) }
+        renamed = true
     }
 }
 

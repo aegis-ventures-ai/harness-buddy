@@ -46,7 +46,7 @@ public enum ProcessRunner {
                 let err = drainPipe(stderrPipe.fileHandleForReading, timeout: out.eof ? 1 : 0.1)
                 stdoutBuffer.append(out.data)
                 stderrBuffer.append(err.data)
-                if !out.eof || !err.eof { killGroup(of: finished.processIdentifier, SIGKILL) }
+                reapGroup(of: finished.processIdentifier)
                 ChildProcessRegistry.shared.unregister(finished)
                 continuation.resume(returning: ProcessResult(
                     exitCode: finished.terminationStatus,

@@ -71,8 +71,9 @@ enum CodexRolloutReader {
         normalized["limitId"] = limits["limit_id"]
         normalized["limitName"] = limits["limit_name"]
         normalized["planType"] = limits["plan_type"]
-        normalized["primary"] = window(limits["primary"])
-        normalized["secondary"] = window(limits["secondary"])
+        // Both slots, null when the event has none (the app-server shape the mapper expects).
+        normalized["primary"] = window(limits["primary"]) ?? NSNull()
+        normalized["secondary"] = window(limits["secondary"]) ?? NSNull()
 
         guard var snapshot = CodexAppServerUsageProvider.snapshot(from: ["rateLimits": normalized], fetchedAt: timestamp),
               !snapshot.windows.isEmpty else { return nil }

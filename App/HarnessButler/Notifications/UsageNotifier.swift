@@ -74,7 +74,6 @@ final class UsageNotifier {
         guard let data = try? JSONEncoder().encode(ledger) else { return }
         let fm = FileManager.default
         try? fm.createPrivateDirectory(at: ledgerURL.deletingLastPathComponent())
-        try? data.write(to: ledgerURL, options: [.atomic])
-        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ledgerURL.path(percentEncoded: false))
+        try? data.writePrivately(to: ledgerURL)
     }
 }

@@ -185,6 +185,7 @@ public struct SafeFileWriter: Sendable {
             while offset < buffer.count {
                 let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
                 if n < 0 { if errno == EINTR { continue }; throw SafeWriteError.posix("write", errno) }
+                if n == 0 { throw SafeWriteError.posix("write", EIO) }   // no progress: don't spin
                 offset += n
             }
         }

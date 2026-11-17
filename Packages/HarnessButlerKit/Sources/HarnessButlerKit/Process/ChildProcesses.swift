@@ -44,9 +44,20 @@ func terminate(_ process: Process, grace: Duration = .seconds(2)) {
     killGroup(of: pid, SIGTERM)
     Task.detached {
         try? await Task.sleep(for: grace)
+        // Only while our process is still there: once it has exited (and its pid could be reused),
+        // the exit handlers have already cleaned up its group (`reapGroup`).
+        guard process.isRunning else { return }
         killGroup(of: pid, SIGKILL)
-        if process.isRunning { kill(pid, SIGKILL) }
+        kill(pid, SIGKILL)
     }
+}
+
+/// Called when a child process has exited: stops anything it started that is still running
+/// (helpers, or background processes), so nothing it spawned outlives the read or update.
+/// Runs right after the exit is reported, while the group can only hold that child's descendants.
+func reapGroup(of pid: pid_t) {
+    guard pid > 1, pid != getpgrp(), kill(-pid, 0) == 0 else { return }
+    kill(-pid, SIGKILL)
 }
 
 /// Foundation's `Process` starts each child as the leader of its own process group (pgid == pid),

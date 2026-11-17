@@ -17,7 +17,9 @@ enum ClaudeUsageParser {
                 guard let row = row as? [String: Any], let window = window(fromLimit: row) else { return nil }
                 windows.append(window)
             }
-            return windows
+            // An empty list defers to the older fixed keys when they're there (spike 01).
+            if !windows.isEmpty { return windows }
+            return legacyWindows(from: usage) ?? []
         }
         return legacyWindows(from: usage)
     }

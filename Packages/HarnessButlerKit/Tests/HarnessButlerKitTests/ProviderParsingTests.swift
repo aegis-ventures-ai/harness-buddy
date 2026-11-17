@@ -55,6 +55,9 @@ private func json(_ text: String) throws -> [String: Any] {
         #expect(ClaudeUsageParser.windows(from: ["limits": "soon"]) == nil)
         // An empty limits list, or older keys set to null, are real answers.
         #expect(ClaudeUsageParser.windows(from: ["limits": []]) == [])
+        // An empty limits list next to the older keys defers to them (spike 01).
+        #expect(ClaudeUsageParser.windows(from: ["limits": [], "five_hour": ["utilization": 12]])?.map(\.id) == ["five_hour"])
+        #expect(ClaudeUsageParser.windows(from: ["limits": [], "five_hour": ["utilization": "x"]]) == [])
         #expect(ClaudeUsageParser.windows(from: ["five_hour": NSNull(), "seven_day": ["utilization": 5]])?.map(\.id) == ["seven_day"])
         #expect(ClaudeUsageParser.windows(from: ["five_hour": ["utilization": "x"]]) == nil)
     }
@@ -157,6 +160,13 @@ private func json(_ text: String) throws -> [String: Any] {
         #expect(CodexAppServerUsageProvider.snapshot(from: ["accountId": "x"], fetchedAt: .now) == nil)
         #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimits": ["primary": ["used": 3]]], fetchedAt: .now) == nil)
         #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimitsByLimitId": ["codex": "x"]], fetchedAt: .now) == nil)
+        // A bucket with neither slot is a shape we don't know, not "no limits".
+        #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimits": [:]], fetchedAt: .now) == nil)
+        #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimitsByLimitId": ["codex": [:]]], fetchedAt: .now) == nil)
+        #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimits": ["limitId": "codex"]], fetchedAt: .now) == nil)
+        // A nonsense duration doesn't crash the label.
+        let huge: [String: Any] = ["rateLimits": ["primary": ["usedPercent": 1, "windowDurationMins": 1e300], "secondary": NSNull()]]
+        #expect(CodexAppServerUsageProvider.snapshot(from: huge, fetchedAt: .now)?.windows.first?.label == "window")
     }
 
     @Test func errorMapping() {

@@ -92,7 +92,8 @@ public struct ConfigBackupStore: Sendable {
         let tmp = String(decoding: template.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self)
         var ok = (try? SafeFileWriter.writeAll(bytes, to: fd)) != nil && fchmod(fd, 0o600) == 0 && fsync(fd) == 0
         close(fd)
-        if ok, let created { ok = (try? FileManager.default.setAttributes([.creationDate: created], ofItemAtPath: tmp)) != nil }
+        // Best effort: removing the identity data matters more than keeping the backup's date.
+        if ok, let created { try? FileManager.default.setAttributes([.creationDate: created], ofItemAtPath: tmp) }
         ok = ok && rename(tmp, path) == 0
         if !ok { unlink(tmp) }
         return ok

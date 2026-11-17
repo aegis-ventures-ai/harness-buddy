@@ -31,8 +31,7 @@ public struct SubscriptionFile: Sendable {
         try FileManager.default.createPrivateDirectory(at: directory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Payload(subscriptions: subscriptions)).write(to: url, options: [.atomic])
         // Private to the user, like the rest of the app's data (spend totals, budgets).
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
+        try encoder.encode(Payload(subscriptions: subscriptions)).writePrivately(to: url)
     }
 }

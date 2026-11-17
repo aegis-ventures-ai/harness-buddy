@@ -100,10 +100,13 @@ public struct CodexAppServerUsageProvider: UsageProvider {
         for bucket in buckets {
             plan = plan ?? LenientJSON.string(bucket.snapshot["planType"])
             let prefix = bucket.id == "codex" ? nil : (LenientJSON.string(bucket.snapshot["limitName"]) ?? bucket.id)
+            // A bucket names at least one slot (null on plans without that limit); extra buckets
+            // such as code review may send only `primary`. A bucket with neither is a shape we don't know.
+            guard bucket.snapshot["primary"] != nil || bucket.snapshot["secondary"] != nil else { return nil }
             for slot in ["primary", "secondary"] {
                 guard let raw = bucket.snapshot[slot], !(raw is NSNull) else { continue }
                 guard let window = LenientJSON.object(raw), let used = LenientJSON.double(window["usedPercent"]) else { return nil }
-                let minutes = LenientJSON.double(window["windowDurationMins"])
+                let minutes = LenientJSON.double(window["windowDurationMins"]).flatMap { $0.isFinite && $0 > 0 && $0 < 1e9 ? $0 : nil }
                 let label = durationLabel(minutes: minutes)
                 windows.append(UsageWindow(
                     id: "\(bucket.id):\(slot)",
@@ -118,7 +121,7 @@ public struct CodexAppServerUsageProvider: UsageProvider {
     }
 
     static func durationLabel(minutes: Double?) -> String {
-        guard let minutes else { return "window" }
+        guard let minutes, minutes.isFinite, minutes > 0, minutes < 1e9 else { return "window" }
         switch Int(minutes) {
         case 300: return "5-hour session"
         case 10080: return "weekly"
