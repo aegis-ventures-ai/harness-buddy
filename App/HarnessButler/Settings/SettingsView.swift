@@ -410,13 +410,19 @@ private struct MenuBarSettings: View {
     @AppStorage(AppSettings.notifyUpdatesKey) private var notifyUpdates = false
     @AppStorage(AppSettings.notifyUsageKey) private var notifyUsage = false
     @AppStorage(AppSettings.notificationsDeniedKey) private var notificationsDenied = false
+    @AppStorage(AppSettings.menuBarModeKey) private var mode = MenuBarMode.percent
 
     var body: some View {
         Form {
             Section("Preview") {
+                Picker("Display", selection: $mode) {
+                    ForEach(MenuBarMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Text(mode.explanation).font(.caption).foregroundStyle(.secondary)
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     MenuBarPreview(title: MenuBarTitle.attributedString(
-                        for: store.pinned.map { ($0, store.usage(for: $0.id)) }, now: context.date
+                        for: store.pinned.map { ($0, store.usage(for: $0.id)) }, now: context.date, mode: mode
                     ))
                 }
                 LabeledContent("Width", value: "\(Int(menuBar.width.rounded())) pt")

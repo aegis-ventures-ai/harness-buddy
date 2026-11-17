@@ -34,6 +34,10 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue, forKey: notifyUpdatesKey) }
     }
 
+    static var menuBarMode: MenuBarMode {
+        UserDefaults.standard.string(forKey: menuBarModeKey).flatMap(MenuBarMode.init(rawValue:)) ?? .percent
+    }
+
     static var notifyUsage: Bool {
         get { UserDefaults.standard.bool(forKey: notifyUsageKey) }
         set { UserDefaults.standard.set(newValue, forKey: notifyUsageKey) }
@@ -63,5 +67,33 @@ enum AppSettings {
                 .flatMap { try? JSONDecoder().decode(UpdateNotificationLedger.self, from: $0) } ?? UpdateNotificationLedger()
         }
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: notificationLedgerKey) }
+    }
+}
+
+/// M-2 menubar display modes.
+enum MenuBarMode: String, CaseIterable, Identifiable {
+    /// Logo + % left per pinned subscription (default).
+    case percent
+    /// One ring for the most constrained pinned subscription.
+    case worstOf
+    /// Logo + two stacked bars (shortest and longest window) per pinned subscription.
+    case miniBars
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .percent: "Percent"
+        case .worstOf: "Worst-of"
+        case .miniBars: "Mini bars"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .percent: "The logo and % left of each pinned subscription's tightest window."
+        case .worstOf: "One ring for the most constrained pinned subscription. Smallest footprint; hover for all of them."
+        case .miniBars: "Two bars per pinned subscription: the shortest window (e.g. the 5-hour session) on top, the longest (e.g. weekly) below."
+        }
     }
 }

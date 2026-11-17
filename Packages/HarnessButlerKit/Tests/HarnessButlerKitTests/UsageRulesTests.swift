@@ -65,3 +65,38 @@ import Testing
         #expect(try #require(current.resetsAt) == now.addingTimeInterval(4 * 3600))
     }
 }
+
+@Suite struct MenuBarModeRulesTests {
+    let now = Date(timeIntervalSince1970: 1_793_491_200)
+
+    func window(_ id: String, used: Double, hours: Double, elapsedHours: Double) -> UsageWindow {
+        UsageWindow(id: id, label: id, usedPercent: used, resetsAt: now.addingTimeInterval((hours - elapsedHours) * 3600), duration: hours * 3600)
+    }
+
+    func snapshot(_ windows: [UsageWindow]) -> UsageSnapshot {
+        UsageSnapshot(windows: windows, planName: nil, fetchedAt: now, source: .live)
+    }
+
+    @Test func worstOfPrefersWorstStatusThenLeastRemaining() {
+        let relaxed = snapshot([window("session", used: 70, hours: 5, elapsedHours: 4.5)])      // 30% left, on track
+        let atRisk = snapshot([window("session", used: 50, hours: 5, elapsedHours: 1)])         // 50% left, at risk
+        let tight = snapshot([window("weekly", used: 85, hours: 168, elapsedHours: 160)])      // 15% left, on track
+        #expect(UsageRules.mostConstrained([(relaxed, false), (atRisk, false), (tight, false)], at: now) == 1)
+        #expect(UsageRules.mostConstrained([(relaxed, false), (tight, false)], at: now) == 1)
+        // Stale data only wins when nothing is fresh; items without data are skipped.
+        #expect(UsageRules.mostConstrained([(relaxed, false), (atRisk, true), (nil, false)], at: now) == 0)
+        #expect(UsageRules.mostConstrained([(nil, false), (atRisk, true)], at: now) == 1)
+        #expect(UsageRules.mostConstrained([(nil, false)], at: now) == nil)
+    }
+
+    @Test func miniBarsAreShortestThenLongest() {
+        let session = window("session", used: 40, hours: 5, elapsedHours: 1)
+        let weekly = window("weekly_all", used: 20, hours: 168, elapsedHours: 10)
+        let scoped = window("weekly_scoped", used: 5, hours: 168, elapsedHours: 10)
+        #expect(UsageRules.miniBarWindows(of: snapshot([weekly, scoped, session])).map(\.id) == ["session", "weekly_all"])
+        #expect(UsageRules.miniBarWindows(of: snapshot([weekly, scoped])).map(\.id) == ["weekly_all"])
+        let untimed = UsageWindow(id: "credits", label: "credits", usedPercent: 3, resetsAt: nil, duration: nil)
+        #expect(UsageRules.miniBarWindows(of: snapshot([untimed])).map(\.id) == ["credits"])
+        #expect(UsageRules.miniBarWindows(of: snapshot([])).isEmpty)
+    }
+}

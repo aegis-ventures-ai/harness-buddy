@@ -163,41 +163,177 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 }
 
-/// Builds the percent-mode title: one `glyph NN%` segment per pinned subscription, in list order.
+/// Builds the menubar title (M-2): percent mode is one `glyph NN%` segment per pinned subscription,
+/// in list order; worst-of is one ring; mini bars are two bars per subscription.
 enum MenuBarTitle {
-    static func attributedString(for items: [(Subscription, SubscriptionUsage)], now: Date) -> NSAttributedString {
+    static func attributedString(for items: [(Subscription, SubscriptionUsage)], now: Date, mode: MenuBarMode = AppSettings.menuBarMode) -> NSAttributedString {
+        switch mode {
+        case .percent: percent(items, now: now)
+        case .worstOf: worstOf(items, now: now)
+        case .miniBars: miniBars(items, now: now)
+        }
+    }
+
+    private static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium) }
+
+    private static func statusColor(_ status: UsageStatus, stale: Bool) -> NSColor {
+        switch status {
+        case .limited: NSColor(hex: 0xEC6F6F)
+        case .atRisk: NSColor(hex: 0xE8B553)
+        case .onTrack: stale ? .secondaryLabelColor : .labelColor
+        }
+    }
+
+    /// Never colour-only (M-3): at risk and limited also get a symbol, stale data a clock.
+    private static func marker(_ status: UsageStatus, stale: Bool, color: NSColor, font: NSFont) -> NSAttributedString? {
+        let name: String? = switch status {
+        case .atRisk: "exclamationmark.triangle.fill"
+        case .limited: "xmark.octagon.fill"
+        case .onTrack: stale ? "clock.badge.exclamationmark" : nil
+        }
+        guard let name else { return nil }
+        let result = NSMutableAttributedString(string: "\u{2009}", attributes: [.font: font])
+        result.append(symbol(name, color: color, font: font, size: 9))
+        return result
+    }
+
+    private static func isStale(_ subscription: Subscription, _ usage: SubscriptionUsage, now: Date) -> Bool {
+        SubscriptionGroup.classify(usage, cadence: subscription.cadence, at: now) == .stale
+    }
+
+    // MARK: Worst-of
+
+    private static func worstOf(_ items: [(Subscription, SubscriptionUsage)], now: Date) -> NSAttributedString {
+        let font = font
         let result = NSMutableAttributedString()
-        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium)
+        let candidates = items.map { (snapshot: $0.1.snapshot, isStale: isStale($0.0, $0.1, now: now)) }
+        guard let index = UsageRules.mostConstrained(candidates, at: now),
+              let snapshot = items[index].1.snapshot?.current(at: now),
+              let window = UsageRules.headlineWindow(of: snapshot, at: now) else {
+            // Nothing with a window yet (loading, errors, or API spend without a budget).
+            if let (_, usage) = items.first(where: { $0.1.snapshot?.spend != nil }), let spend = usage.snapshot?.spend {
+                return NSAttributedString(string: Format.compactDollars(spend.monthToDate, currency: spend.currency), attributes: [.font: font])
+            }
+            return items.isEmpty ? result : NSAttributedString(string: "–", attributes: [.font: font])
+        }
+        let status = UsageRules.status(of: window, at: now)
+        let stale = candidates[index].isStale
+        let color = statusColor(status, stale: stale)
+        let ringColor: NSColor = status == .onTrack && !stale ? Theme.nsColor(for: items[index].0.harness) : color
+        result.append(attachment(ring(remaining: window.remainingPercent / 100, color: ringColor), font: font))
+        result.append(NSAttributedString(string: "\u{2009}" + Format.percent(window.remainingPercent), attributes: [.font: font, .foregroundColor: color]))
+        if let marker = marker(status, stale: stale, color: color, font: font) { result.append(marker) }
+        return result
+    }
+
+    /// A 14 pt ring: track plus an arc for the remaining fraction, clockwise from the top.
+    static func ring(remaining: Double, color: NSColor) -> NSImage {
+        let size: CGFloat = 14
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            let lineWidth: CGFloat = 2.2
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            let radius = (size - lineWidth) / 2
+            let track = NSBezierPath()
+            track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+            track.lineWidth = lineWidth
+            NSColor.tertiaryLabelColor.setStroke()
+            track.stroke()
+            let fraction = max(0, min(1, remaining))
+            if fraction > 0 {
+                let arc = NSBezierPath()
+                arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * fraction, clockwise: true)
+                arc.lineWidth = lineWidth
+                arc.lineCapStyle = .round
+                color.setStroke()
+                arc.stroke()
+            }
+            return true
+        }
+        image.accessibilityDescription = "\(Int((remaining * 100).rounded())) percent left"
+        return image
+    }
+
+    // MARK: Mini bars
+
+    private static func miniBars(_ items: [(Subscription, SubscriptionUsage)], now: Date) -> NSAttributedString {
+        let font = font
+        let result = NSMutableAttributedString()
+        for (index, (subscription, usage)) in items.enumerated() {
+            if index > 0 { result.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
+            result.append(logo(for: subscription.harness, font: font))
+            result.append(NSAttributedString(string: "\u{2009}", attributes: [.font: font]))
+            let stale = isStale(subscription, usage, now: now)
+            guard let snapshot = usage.snapshot?.current(at: now) else {
+                result.append(NSAttributedString(string: "–", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+                continue
+            }
+            let windows = UsageRules.miniBarWindows(of: snapshot)
+            if windows.isEmpty {
+                let text = snapshot.spend.map { Format.compactDollars($0.monthToDate, currency: $0.currency) } ?? "–"
+                result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: stale ? NSColor.secondaryLabelColor : NSColor.labelColor]))
+                continue
+            }
+            let bars = windows.map { window -> (remaining: Double, color: NSColor) in
+                let status = UsageRules.status(of: window, at: now)
+                let color: NSColor = status == .onTrack ? (stale ? .secondaryLabelColor : Theme.nsColor(for: subscription.harness)) : statusColor(status, stale: stale)
+                return (window.remainingPercent / 100, color)
+            }
+            result.append(attachment(barsImage(bars), font: font))
+            let worst = windows.map { UsageRules.status(of: $0, at: now) }.max() ?? .onTrack
+            if let marker = marker(worst, stale: stale, color: statusColor(worst, stale: stale), font: font) { result.append(marker) }
+        }
+        return result
+    }
+
+    /// Stacked 26×3 pt bars, filled to the remaining fraction (as in the mockup).
+    static func barsImage(_ bars: [(remaining: Double, color: NSColor)]) -> NSImage {
+        let width: CGFloat = 26, barHeight: CGFloat = 3, gap: CGFloat = 2
+        let height = CGFloat(bars.count) * barHeight + CGFloat(max(0, bars.count - 1)) * gap
+        let image = NSImage(size: NSSize(width: width, height: max(height, barHeight)), flipped: true) { _ in
+            for (index, bar) in bars.enumerated() {
+                let y = CGFloat(index) * (barHeight + gap)
+                let track = NSRect(x: 0, y: y, width: width, height: barHeight)
+                NSColor.tertiaryLabelColor.setFill()
+                NSBezierPath(roundedRect: track, xRadius: 1.5, yRadius: 1.5).fill()
+                let fill = NSRect(x: 0, y: y, width: width * max(0, min(1, bar.remaining)), height: barHeight)
+                if fill.width > 0 {
+                    bar.color.setFill()
+                    NSBezierPath(roundedRect: fill, xRadius: 1.5, yRadius: 1.5).fill()
+                }
+            }
+            return true
+        }
+        image.accessibilityDescription = bars.map { "\(Int(($0.remaining * 100).rounded())) percent left" }.joined(separator: ", ")
+        return image
+    }
+
+    private static func attachment(_ image: NSImage, font: NSFont) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - image.size.height) / 2, width: image.size.width, height: image.size.height)
+        return NSAttributedString(attachment: attachment)
+    }
+
+    // MARK: Percent
+
+    private static func percent(_ items: [(Subscription, SubscriptionUsage)], now: Date) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let font = font
         for (index, (subscription, usage)) in items.enumerated() {
             if index > 0 { result.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
 
             let snapshot = usage.snapshot?.current(at: now)
             let window = snapshot.flatMap { UsageRules.headlineWindow(of: $0, at: now) }
             let status = window.map { UsageRules.status(of: $0, at: now) } ?? .onTrack
-            let stale = SubscriptionGroup.classify(usage, cadence: subscription.cadence, at: now) == .stale
-
-            let color: NSColor = switch status {
-            case .limited: NSColor(hex: 0xEC6F6F)
-            case .atRisk: NSColor(hex: 0xE8B553)
-            case .onTrack: stale ? .secondaryLabelColor : .labelColor
-            }
+            let stale = isStale(subscription, usage, now: now)
+            let color = statusColor(status, stale: stale)
 
             result.append(logo(for: subscription.harness, font: font))
             // API spend without a budget has no window: show the month-to-date amount instead.
             let text = window.map { Format.percent($0.remainingPercent) }
                 ?? snapshot?.spend.map { Format.compactDollars($0.monthToDate, currency: $0.currency) } ?? "–"
             result.append(NSAttributedString(string: "\u{2009}" + text, attributes: [.font: font, .foregroundColor: color]))
-
-            // Never colour-only (M-3): at risk and limited also get a symbol.
-            let marker: String? = switch status {
-            case .atRisk: "exclamationmark.triangle.fill"
-            case .limited: "xmark.octagon.fill"
-            case .onTrack: stale ? "clock.badge.exclamationmark" : nil
-            }
-            if let marker {
-                result.append(NSAttributedString(string: "\u{2009}", attributes: [.font: font]))
-                result.append(symbol(marker, color: color, font: font, size: 9))
-            }
+            if let marker = marker(status, stale: stale, color: color, font: font) { result.append(marker) }
         }
         return result
     }

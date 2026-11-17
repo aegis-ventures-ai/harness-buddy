@@ -45,6 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             await store.start()
             if let environment = store.environment { harnesses.start(environment: environment) }
             #if DEBUG
+            if let directory = MenuBarRenderer.directory {
+                try? await Task.sleep(for: .seconds(8))
+                MenuBarRenderer.render(store.pinned.map { ($0, store.usage(for: $0.id)) }, to: directory)
+                NSApp.terminate(nil)
+            }
             if CommandLine.arguments.contains("--open-popover") {
                 try? await Task.sleep(for: .seconds(3))
                 statusItem?.openPopoverForDebugging()

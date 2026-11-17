@@ -78,3 +78,42 @@ private struct CannedSpendTransport: HTTPTransport {
     }
 }
 #endif
+
+#if DEBUG
+import AppKit
+
+/// `--render-menubar DIR`: draws the menubar title in every mode, on dark and light menubar
+/// backgrounds, to PNGs in DIR, then quits. Offscreen only: nothing is captured from the screen.
+enum MenuBarRenderer {
+    static var directory: URL? {
+        guard let index = CommandLine.arguments.firstIndex(of: "--render-menubar"), index + 1 < CommandLine.arguments.count else { return nil }
+        return URL(filePath: CommandLine.arguments[index + 1], directoryHint: .isDirectory)
+    }
+
+    static func render(_ items: [(Subscription, SubscriptionUsage)], to directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for mode in MenuBarMode.allCases {
+            for (name, appearance, background) in [("dark", NSAppearance.Name.darkAqua, NSColor(white: 0.16, alpha: 1)),
+                                                   ("light", NSAppearance.Name.aqua, NSColor(white: 0.93, alpha: 1))] {
+                NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+                    let title = MenuBarTitle.attributedString(for: items, now: .now, mode: mode)
+                    let size = title.size()
+                    let scale: CGFloat = 2
+                    let canvas = NSSize(width: ceil(size.width) + 16, height: 24)
+                    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(canvas.width * scale), pixelsHigh: Int(canvas.height * scale),
+                                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return }
+                    rep.size = canvas
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+                    background.setFill()
+                    NSRect(origin: .zero, size: canvas).fill()
+                    title.draw(at: NSPoint(x: 8, y: (canvas.height - size.height) / 2))
+                    NSGraphicsContext.restoreGraphicsState()
+                    try? rep.representation(using: .png, properties: [:])?.write(to: directory.appending(path: "menubar-\(mode.rawValue)-\(name).png"))
+                }
+            }
+        }
+    }
+}
+#endif

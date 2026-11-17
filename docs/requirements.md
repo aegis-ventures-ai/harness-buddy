@@ -221,7 +221,29 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
        - xattrs and ACLs are copied across the rename.
        - The lock's mtime is refreshed while it is held.
        - JSON: a BOM is accepted, duplicate keys resolve last-wins, and nesting depth is capped.
-5. **M4 — API spend + polish:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, worst-of and mini-bar menubar modes.
+5. **M4 — API spend + polish ✅ done 2026-11-17:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, worst-of and mini-bar menubar modes.
+   - Implemented:
+     - U-3: "API spend" subscriptions for Anthropic (Usage and Cost Analytics API, `/v1/organizations/analytics/cost`, hourly buckets) and OpenAI (`/v1/organization/costs`, daily buckets).
+       - The Admin key is entered once in a secure field, stored only in the login Keychain (one item per subscription), sent only to its provider, and deleted with the subscription.
+       - The key's prefix is checked before saving.
+     - U-7: month-to-date spend, the daily run rate and the projected month-end, over the UTC billing month.
+       - The run rate counts the data up to the provider's `data_refreshed_at`, and at least one day.
+       - An optional monthly budget can be set when adding the subscription or edited later in Settings.
+     - U-8: a budget becomes a usage window over the billing month, so the existing pace and at-risk rule, status grouping, alerts and menubar apply unchanged. Without a budget, the row and menubar show the amount spent.
+     - API subscriptions refresh every 30 minutes, because providers report spend hours late.
+     - U-9 / U-10:
+       - `history.sqlite` (0600) stores only subscription ID, window ID, time and percent. Unchanged readings are thinned to one per 30 minutes, and rows are kept 35 days.
+       - The detail view shows the longest window's percent used per day for the last 7 days.
+       - API subscriptions also get a 7-day spend chart.
+     - §4.5 notifications, opt-in (permission is asked only when turned on):
+       - 80% and 95% thresholds per window, each sent once per window period;
+       - a "limited" alert;
+       - a "reset" alert when a limited window is usable again;
+       - per-subscription chips in the detail view; clicking an alert opens that subscription.
+     - M-2: the worst-of mode (one ring for the most constrained pinned subscription) and the mini-bars mode (shortest and longest window per subscription). Both are chosen in Settings → Menubar with a live preview, and keep the M-3 status glyphs.
+   - Not done:
+     - Sparkle auto-update (distribution, P1). It needs a signed release pipeline and an appcast host, which is better set up deliberately than unattended.
+     - Admin-key reads haven't been run against the live APIs; there was no key available. The request and response handling is covered by fixture tests built from the providers' documented shapes, and can be checked with `hb-probe --api-env`.
 
 ## 9. Risks
 
