@@ -156,8 +156,8 @@ public enum ExtensionsScanner {
                     var target = handler["command"]?.string ?? handler["url"]?.string ?? handler["prompt"]?.string ?? ""
                     if let args = handler["args"]?.stringArray, !args.isEmpty { target += " " + args.joined(separator: " ") }
                     let timeout: Int? = switch handler["timeout"] {
-                    case .integer(let v): Int(v)
-                    case .double(let v): Int(v)
+                    case .integer(let v): Int(exactly: v)
+                    case .double(let v): v.isFinite && abs(v) < 1e9 ? Int(v) : nil
                     default: nil
                     }
                     result.append(HookEntry(event: event.key, matcher: matcher?.isEmpty == true ? nil : matcher, type: type,

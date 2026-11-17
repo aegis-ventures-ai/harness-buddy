@@ -39,13 +39,15 @@ public enum StreamingProcess {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { finished in
                     pipe.fileHandleForReading.readabilityHandler = nil
+                    let state = flags.withLock { $0 }
+                    // An updater that finished on its own may leave a finisher running, as in a
+                    // terminal; one we stopped (timeout or cancel) takes its helpers with it.
+                    if state.timedOut || state.cancelled { reapGroup(of: finished.processIdentifier) }
                     // Bounded: a descendant holding the pipe open would otherwise block this forever.
                     let rest = drainPipe(pipe.fileHandleForReading, timeout: 2)
                     if !rest.data.isEmpty, let text = decoder.decode(rest.data) { onOutput(text) }
-                    reapGroup(of: finished.processIdentifier)
                     if let tail = decoder.flush() { onOutput(tail) }
                     ChildProcessRegistry.shared.unregister(finished)
-                    let state = flags.withLock { $0 }
                     continuation.resume(returning: StreamingResult(
                         exitCode: finished.terminationStatus, timedOut: state.timedOut, cancelled: state.cancelled
                     ))

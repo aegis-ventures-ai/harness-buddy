@@ -8,9 +8,10 @@ public struct SemanticVersion: Comparable, Hashable, Sendable, CustomStringConve
 
     public init?(_ text: String) {
         guard let match = text.firstMatch(of: /(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?/) else { return nil }
-        var parts = [Int(match.1)!, Int(match.2)!]
-        if let patch = match.3 { parts.append(Int(patch)!) }
-        if let build = match.4 { parts.append(Int(build)!) }
+        // Each component must fit an Int: a 30-digit run isn't a version.
+        let digits = [match.1, match.2] + [match.3, match.4].compactMap { $0 }
+        let parts = digits.compactMap { Int($0) }
+        guard parts.count == digits.count else { return nil }
         components = parts
         prerelease = match.5.map(String.init)
     }

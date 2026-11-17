@@ -41,12 +41,13 @@ public enum ProcessRunner {
             process.terminationHandler = { finished in
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
+                // Helpers must not outlive a read; reaping first also lets the pipes reach EOF.
+                reapGroup(of: finished.processIdentifier)
                 // Bounded: a descendant holding the pipe open would otherwise block this forever.
                 let out = drainPipe(stdoutPipe.fileHandleForReading)
                 let err = drainPipe(stderrPipe.fileHandleForReading, timeout: out.eof ? 1 : 0.1)
                 stdoutBuffer.append(out.data)
                 stderrBuffer.append(err.data)
-                reapGroup(of: finished.processIdentifier)
                 ChildProcessRegistry.shared.unregister(finished)
                 continuation.resume(returning: ProcessResult(
                     exitCode: finished.terminationStatus,

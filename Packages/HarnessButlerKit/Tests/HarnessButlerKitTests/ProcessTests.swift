@@ -57,7 +57,27 @@ import Testing
         _ = try await ProcessRunner.run(sh, arguments: ["-c", script, pidFile.path(percentEncoded: false)])
         #expect(try await descendantStops(pidFile: pidFile))
 
+    }
+
+    @Test func anUpdaterThatFinishesMayLeaveAFinisherRunning() async throws {
+        // Like a terminal: only an update we stopped takes its helpers with it.
+        let pidFile = FileManager.default.temporaryDirectory.appending(path: "hb-desc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let script = "/usr/bin/tail -f /dev/null </dev/null >/dev/null 2>&1 & echo $! > \"$0\"; exit 0"
         _ = try await StreamingProcess.run(sh, arguments: ["-c", script, pidFile.path(percentEncoded: false)], environment: [:]) { _ in }
+        let pid = try #require(pid_t(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        defer { kill(pid, SIGKILL) }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(kill(pid, 0) == 0)
+    }
+
+    @Test func aTimedOutUpdaterTakesItsHelpersWithIt() async throws {
+        let pidFile = FileManager.default.temporaryDirectory.appending(path: "hb-desc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let script = "/usr/bin/tail -f /dev/null </dev/null >/dev/null 2>&1 & echo $! > \"$0\"; exec /usr/bin/tail -f /dev/null"
+        let result = try await StreamingProcess.run(sh, arguments: ["-c", script, pidFile.path(percentEncoded: false)], environment: [:],
+                                                    timeout: .milliseconds(500)) { _ in }
+        #expect(result.timedOut)
         #expect(try await descendantStops(pidFile: pidFile))
     }
 
@@ -76,9 +96,12 @@ import Testing
 
     @Test func streamingDoesNotWaitForADescendantHoldingThePipe() async throws {
         let start = ContinuousClock.now
-        let result = try await StreamingProcess.run(sh, arguments: ["-c", "echo started; /usr/bin/tail -f /dev/null & exit 0"], environment: [:]) { _ in }
+        let pidFile = FileManager.default.temporaryDirectory.appending(path: "hb-desc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let result = try await StreamingProcess.run(sh, arguments: ["-c", "echo started; /usr/bin/tail -f /dev/null & echo $! > \"$0\"; exit 0", pidFile.path(percentEncoded: false)], environment: [:]) { _ in }
         #expect(result.exitCode == 0)
         #expect(ContinuousClock.now - start < .seconds(6))
+        if let pid = pid_t((try? String(contentsOf: pidFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "") { kill(pid, SIGKILL) }
     }
 
     @Test func runnerReportsLaunchFailure() async {

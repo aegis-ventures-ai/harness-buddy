@@ -19,6 +19,8 @@ import Testing
     @Test func rejectsTextWithoutVersion() {
         #expect(SemanticVersion("grok (2fe3608f7398)") == nil)
         #expect(SemanticVersion("") == nil)
+        // A digit run too long for Int isn't a version (and must not crash).
+        #expect(SemanticVersion("1.99999999999999999999999999999") == nil)
     }
 
     @Test func ordersNumericallyAndPutsPrereleasesFirst() throws {

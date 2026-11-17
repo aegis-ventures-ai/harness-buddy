@@ -57,7 +57,12 @@ private func json(_ text: String) throws -> [String: Any] {
         #expect(ClaudeUsageParser.windows(from: ["limits": []]) == [])
         // An empty limits list next to the older keys defers to them (spike 01).
         #expect(ClaudeUsageParser.windows(from: ["limits": [], "five_hour": ["utilization": 12]])?.map(\.id) == ["five_hour"])
-        #expect(ClaudeUsageParser.windows(from: ["limits": [], "five_hour": ["utilization": "x"]]) == [])
+        // ...but unreadable older keys make the payload unreadable, so the last good data stays.
+        #expect(ClaudeUsageParser.windows(from: ["limits": [], "five_hour": ["utilization": "x"]]) == nil)
+        #expect(ClaudeUsageParser.windows(from: ["limits": [], "five_hour": NSNull()]) == [])
+        // Nonsense credit amounts or exponents don't crash or mislead.
+        #expect(ClaudeUsageParser.credits(from: ["extra_usage": ["is_enabled": true, "used_credits": 1e300]]) == nil)
+        #expect(ClaudeUsageParser.credits(from: ["extra_usage": ["is_enabled": true, "used_credits": 150, "decimal_places": 1_000_000]])?.exponent == 2)
         #expect(ClaudeUsageParser.windows(from: ["five_hour": NSNull(), "seven_day": ["utilization": 5]])?.map(\.id) == ["seven_day"])
         #expect(ClaudeUsageParser.windows(from: ["five_hour": ["utilization": "x"]]) == nil)
     }

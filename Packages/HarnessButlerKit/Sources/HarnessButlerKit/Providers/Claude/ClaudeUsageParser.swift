@@ -17,9 +17,10 @@ enum ClaudeUsageParser {
                 guard let row = row as? [String: Any], let window = window(fromLimit: row) else { return nil }
                 windows.append(window)
             }
-            // An empty list defers to the older fixed keys when they're there (spike 01).
+            // An empty list defers to the older fixed keys when they're there (spike 01); if they're
+            // there but unreadable, the whole payload is.
             if !windows.isEmpty { return windows }
-            return legacyWindows(from: usage) ?? []
+            return hasLegacyKeys(usage) ? legacyWindows(from: usage) : []
         }
         return legacyWindows(from: usage)
     }
@@ -50,14 +51,19 @@ enum ClaudeUsageParser {
     }
 
     /// Older fixed keys, used if `limits[]` is missing. `nil` when none of them is there either.
+    private static let legacyKeys: [(key: String, label: String, duration: TimeInterval)] = [
+        ("five_hour", "5-hour session", sessionDuration),
+        ("seven_day", "weekly · all models", weeklyDuration),
+        ("seven_day_opus", "weekly · opus", weeklyDuration),
+        ("seven_day_sonnet", "weekly · sonnet", weeklyDuration),
+    ]
+
+    private static func hasLegacyKeys(_ usage: [String: Any]) -> Bool {
+        legacyKeys.contains { usage[$0.key] != nil }
+    }
+
     private static func legacyWindows(from usage: [String: Any]) -> [UsageWindow]? {
-        let keys: [(key: String, label: String, duration: TimeInterval)] = [
-            ("five_hour", "5-hour session", sessionDuration),
-            ("seven_day", "weekly · all models", weeklyDuration),
-            ("seven_day_opus", "weekly · opus", weeklyDuration),
-            ("seven_day_sonnet", "weekly · sonnet", weeklyDuration),
-        ]
-        let present = keys.filter { usage[$0.key] != nil }
+        let present = legacyKeys.filter { usage[$0.key] != nil }
         guard !present.isEmpty else { return nil }
         var windows: [UsageWindow] = []
         for entry in present where !(usage[entry.key] is NSNull) {   // null: not on this plan
@@ -83,19 +89,25 @@ enum ClaudeUsageParser {
                 usedMinor: usedMinor,
                 limitMinor: LenientJSON.int(limit?["amount_minor"]),
                 currency: LenientJSON.string(used["currency"]) ?? "USD",
-                exponent: LenientJSON.int(used["exponent"]) ?? 2
+                exponent: currencyExponent(used["exponent"])
             )
         }
         if let extra = LenientJSON.object(usage["extra_usage"]), extra["is_enabled"] as? Bool == true,
-           let used = LenientJSON.double(extra["used_credits"]) {
+           let used = LenientJSON.double(extra["used_credits"]), used.isFinite, abs(used) < 1e15 {
             return UsageCredits(
                 usedMinor: Int(used.rounded()),
                 limitMinor: LenientJSON.int(extra["monthly_limit"]),
                 currency: LenientJSON.string(extra["currency"]) ?? "USD",
-                exponent: LenientJSON.int(extra["decimal_places"]) ?? 2
+                exponent: currencyExponent(extra["decimal_places"])
             )
         }
         return nil
+    }
+
+    /// Minor-unit digits; anything outside 0...6 is nonsense, so use the usual 2.
+    static func currencyExponent(_ value: Any?) -> Int {
+        guard let exponent = LenientJSON.int(value), (0...6).contains(exponent) else { return 2 }
+        return exponent
     }
 
     /// Plan label: `planDisplayName`, else the subscription type plus a `rateLimitTier` multiplier.

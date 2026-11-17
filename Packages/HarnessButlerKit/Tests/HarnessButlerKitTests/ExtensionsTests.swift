@@ -25,7 +25,7 @@ import Testing
         {
           "hooks": {
             "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "guard.sh", "timeout": 10 }] }],
-            "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }, { "type": "http", "url": "https://example.com/h" }] }]
+            "Stop": [{ "hooks": [{ "type": "command", "command": "say done", "timeout": 1e20 }, { "type": "http", "url": "https://example.com/h" }] }]
           },
           "enabledPlugins": { "lsp@official": true, "themes@community": false }
         }
@@ -46,6 +46,7 @@ import Testing
         #expect(inventory.hooks.map(\.event) == ["PreToolUse", "Stop", "Stop"])
         #expect(inventory.hooks[0].matcher == "Bash" && inventory.hooks[0].target == "guard.sh" && inventory.hooks[0].timeout == 10)
         #expect(inventory.hooks[2].type == "http" && inventory.hooks[2].target == "https://example.com/h")
+        #expect(inventory.hooks[1].timeout == nil)   // out of range: shown as no timeout, not a crash
         #expect(inventory.hooks[0].source == "~/.claude/settings.json")
 
         // Project-scope installs are project-level config and stay out (C-11).

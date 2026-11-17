@@ -78,10 +78,14 @@ extension Data {
         do {
             defer { close(fd) }
             try SafeFileWriter.writeAll([UInt8](self), to: fd)
-            guard fchmod(fd, 0o600) == 0, fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
+            guard fchmod(fd, 0o600) == 0 else { throw SafeWriteError.posix("fchmod", errno) }
+            guard fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
         }
         guard rename(tmp, path) == 0 else { throw SafeWriteError.posix("rename", errno) }
         renamed = true
+        // Make the rename itself durable (best effort, as for config writes).
+        let dir = Darwin.open(url.deletingLastPathComponent().path(percentEncoded: false), O_RDONLY)
+        if dir >= 0 { fsync(dir); close(dir) }
     }
 }
 

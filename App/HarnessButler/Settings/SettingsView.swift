@@ -276,7 +276,8 @@ enum BudgetInput {
 
     static func text(_ budget: Double?) -> String {
         guard let budget else { return "" }
-        return budget == budget.rounded() ? String(Int(budget)) : String(format: "%.2f", budget)
+        // %.0f, not Int(_:), so a huge budget (say 1e20) can't trap.
+        return budget == budget.rounded() ? String(format: "%.0f", budget) : String(format: "%.2f", budget)
     }
 }
 
