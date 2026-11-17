@@ -23,12 +23,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
-        popover.contentViewController = NSHostingController(rootView: PopoverView(
+        let hosting = NSHostingController(rootView: PopoverView(
             store: store,
             harnesses: harnesses,
             navigation: navigation,
             openSettings: { [weak self] page in self?.closePopoverThen { openSettings(page) } }
         ))
+        // Let NSPopover size itself from SwiftUI's preferred size. Otherwise the hosting view resizes
+        // the popover window from its bottom edge when content changes (rows loading, detail page),
+        // and the popover grows up under the menubar.
+        hosting.sizingOptions = .preferredContentSize
+        popover.contentViewController = hosting
 
         if let button = statusItem.button {
             button.target = self
