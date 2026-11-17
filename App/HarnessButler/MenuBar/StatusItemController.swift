@@ -83,12 +83,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         button.attributedTitle = title
         menuBarState.width = button.intrinsicContentSize.width
         updateVisibility()
-        var tooltip = MenuBarTitle.tooltip(for: pinned.map { ($0, store.usage(for: $0.id)) }, now: now) ?? ""
+        let items = pinned.map { ($0, store.usage(for: $0.id)) }
+        var tooltip = MenuBarTitle.tooltip(for: items, now: now) ?? ""
+        var label = MenuBarTitle.accessibilityLabel(for: items, now: now)
         for harness in updates {
-            tooltip += "\nUpdate available: \(harness.displayName) \(harnesses.status(for: harness).latest.map(\.description) ?? "")"
+            let line = "\(harness.displayName) \(harnesses.status(for: harness).latest.map(\.description) ?? "") available"
+            tooltip += "\n" + line
+            label += "\nUpdate available: " + line
         }
         button.toolTip = tooltip
-        button.setAccessibilityLabel(button.toolTip ?? "Harness Butler")
+        button.setAccessibilityLabel(label)
     }
 
     /// Hidden when the item's window is gone, off every screen, or fully occluded while the menubar shows.
@@ -374,16 +378,46 @@ enum MenuBarTitle {
         return result
     }
 
-    /// M-6 tooltip and VoiceOver label: name, % left, reset per pinned subscription.
+    /// M-6 tooltip: one short line per pinned subscription, e.g. "Claude Work: 82% left · resets 2d 21h",
+    /// with a status word only when it needs attention. Short enough not to wrap.
     static func tooltip(for items: [(Subscription, SubscriptionUsage)], now: Date) -> String? {
         guard !items.isEmpty else { return "Harness Butler — no pinned subscriptions" }
+        return items.map { subscription, usage in
+            let stale = SubscriptionGroup.classify(usage, cadence: subscription.cadence, at: now) == .stale
+            guard let snapshot = usage.snapshot?.current(at: now) else {
+                return "\(subscription.name): \(usage.issue == nil ? "loading…" : "no data")"
+            }
+            var parts: [String]
+            var status = UsageStatus.onTrack
+            if let window = UsageRules.headlineWindow(of: snapshot, at: now) {
+                status = UsageRules.status(of: window, at: now)
+                parts = ["\(Format.percent(window.remainingPercent)) left"]
+                if let resetsAt = window.resetsAt { parts.append("resets \(Format.duration(resetsAt.timeIntervalSince(now)))") }
+            } else if let spend = snapshot.spend {
+                parts = ["\(Format.compactDollars(spend.monthToDate, currency: spend.currency)) so far",
+                         "\(Format.compactDollars(spend.projectedMonthEnd(at: now), currency: spend.currency)) projected"]
+            } else {
+                parts = ["no data"]
+            }
+            switch status {
+            case .limited: parts.append("limited")
+            case .atRisk: parts.append("at risk")
+            case .onTrack: if stale { parts.append("stale") }
+            }
+            return "\(subscription.name): " + parts.joined(separator: " · ")
+        }.joined(separator: "\n")
+    }
+
+    /// VoiceOver label: the fuller version, with window names and issues.
+    static func accessibilityLabel(for items: [(Subscription, SubscriptionUsage)], now: Date) -> String {
+        guard !items.isEmpty else { return "Harness Butler, no pinned subscriptions" }
         return items.map { subscription, usage in
             guard let snapshot = usage.snapshot?.current(at: now),
                   let window = UsageRules.headlineWindow(of: snapshot, at: now) else {
                 if let spend = usage.snapshot?.spend {
                     return "\(subscription.name): \(Format.dollars(spend.monthToDate, currency: spend.currency)) this month, projected \(Format.dollars(spend.projectedMonthEnd(at: now), currency: spend.currency))"
                 }
-                return "\(subscription.name): \(usage.issue?.message ?? "loading…")"
+                return "\(subscription.name): \(usage.issue?.message ?? "loading")"
             }
             return "\(subscription.name): \(Format.percent(window.remainingPercent)) left (\(window.label)), \(Format.resets(window.resetsAt, now: now))"
         }.joined(separator: "\n")
