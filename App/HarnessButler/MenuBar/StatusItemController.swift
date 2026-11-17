@@ -179,7 +179,10 @@ enum MenuBarTitle {
         }
     }
 
-    private static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .medium) }
+    /// The standard menubar text size (13 pt), with fixed-width digits so the item doesn't jitter.
+    private static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular) }
+    /// Standard status-item icon size.
+    static let iconSize: CGFloat = 16
 
     private static func statusColor(_ status: UsageStatus, stale: Bool) -> NSColor {
         switch status {
@@ -198,7 +201,7 @@ enum MenuBarTitle {
         }
         guard let name else { return nil }
         let result = NSMutableAttributedString(string: "\u{2009}", attributes: [.font: font])
-        result.append(symbol(name, color: color, font: font, size: 9))
+        result.append(symbol(name, color: color, font: font, size: 11))
         return result
     }
 
@@ -231,11 +234,11 @@ enum MenuBarTitle {
         return result
     }
 
-    /// A 14 pt ring: track plus an arc for the remaining fraction, clockwise from the top.
+    /// A 16 pt ring: track plus an arc for the remaining fraction, clockwise from the top.
     static func ring(remaining: Double, color: NSColor) -> NSImage {
-        let size: CGFloat = 14
+        let size: CGFloat = iconSize
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            let lineWidth: CGFloat = 2.2
+            let lineWidth: CGFloat = 2.5
             let center = NSPoint(x: rect.midX, y: rect.midY)
             let radius = (size - lineWidth) / 2
             let track = NSBezierPath()
@@ -290,9 +293,9 @@ enum MenuBarTitle {
         return result
     }
 
-    /// Stacked 26×3 pt bars, filled to the remaining fraction (as in the mockup).
+    /// Stacked 30×4 pt bars, filled to the remaining fraction (as in the mockup).
     static func barsImage(_ bars: [(remaining: Double, color: NSColor)]) -> NSImage {
-        let width: CGFloat = 26, barHeight: CGFloat = 3, gap: CGFloat = 2
+        let width: CGFloat = 30, barHeight: CGFloat = 4, gap: CGFloat = 3
         let height = CGFloat(bars.count) * barHeight + CGFloat(max(0, bars.count - 1)) * gap
         let image = NSImage(size: NSSize(width: width, height: max(height, barHeight)), flipped: true) { _ in
             for (index, bar) in bars.enumerated() {
@@ -344,7 +347,7 @@ enum MenuBarTitle {
     }
 
     private static func logo(for harness: Harness, font: NSFont) -> NSAttributedString {
-        guard let image = Theme.tintedLogo(for: harness, size: 13) else { return NSAttributedString() }
+        guard let image = Theme.tintedLogo(for: harness, size: iconSize) else { return NSAttributedString() }
         let attachment = NSTextAttachment()
         attachment.image = image
         attachment.bounds = CGRect(x: 0, y: (font.capHeight - image.size.height) / 2, width: image.size.width, height: image.size.height)
@@ -367,7 +370,7 @@ enum MenuBarTitle {
     /// M-4: a small accent dot after the title.
     static func updateBadge() -> NSAttributedString {
         let result = NSMutableAttributedString(string: "\u{2009}")
-        result.append(symbol("circle.fill", color: NSColor(hex: 0x8FB4F2), font: NSFont.systemFont(ofSize: NSFont.systemFontSize), size: 6))
+        result.append(symbol("circle.fill", color: NSColor(hex: 0x8FB4F2), font: NSFont.systemFont(ofSize: NSFont.systemFontSize), size: 7))
         return result
     }
 
