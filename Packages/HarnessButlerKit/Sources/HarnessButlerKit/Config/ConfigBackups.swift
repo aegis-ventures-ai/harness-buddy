@@ -74,16 +74,28 @@ public struct ConfigBackupStore: Sendable {
                     guard let data = manager.contents(atPath: path),
                           let scoped = try? ConfigDocument(format: kind.format, bytes: [UInt8](data)).keeping(only: scope).bytes,
                           scoped != [UInt8](data) else { continue }
-                    // Rewrite in place: the file keeps its 0600 mode and creation date (the backup's date).
-                    let fd = open(path, O_WRONLY | O_TRUNC)
-                    guard fd >= 0 else { continue }
-                    let ok = scoped.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0
-                    close(fd)
-                    if ok { scrubbed += 1 }
+                    if Self.replace(url, with: scoped) { scrubbed += 1 }
                 }
             }
         }
         return scrubbed
+    }
+
+    /// Atomically replaces a backup's content (temp file, fsync, rename), keeping its date: the backup
+    /// list orders by creation date, so the new file gets the old one's.
+    static func replace(_ url: URL, with bytes: [UInt8]) -> Bool {
+        let path = url.path(percentEncoded: false)
+        let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+        var template = Array("\(path).scrub-XXXXXX".utf8CString)
+        let fd = mkstemp(&template)
+        guard fd >= 0 else { return false }
+        let tmp = String(decoding: template.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        var ok = (try? SafeFileWriter.writeAll(bytes, to: fd)) != nil && fchmod(fd, 0o600) == 0 && fsync(fd) == 0
+        close(fd)
+        if ok, let created { ok = (try? FileManager.default.setAttributes([.creationDate: created], ofItemAtPath: tmp)) != nil }
+        ok = ok && rename(tmp, path) == 0
+        if !ok { unlink(tmp) }
+        return ok
     }
 
     /// Delete backups older than the retention period.

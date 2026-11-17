@@ -39,8 +39,10 @@ public enum StreamingProcess {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { finished in
                     pipe.fileHandleForReading.readabilityHandler = nil
-                    let rest = pipe.fileHandleForReading.readDataToEndOfFile()
-                    if !rest.isEmpty, let text = decoder.decode(rest) { onOutput(text) }
+                    // Bounded: a descendant holding the pipe open would otherwise block this forever.
+                    let rest = drainPipe(pipe.fileHandleForReading, timeout: 2)
+                    if !rest.data.isEmpty, let text = decoder.decode(rest.data) { onOutput(text) }
+                    if !rest.eof { killGroup(of: finished.processIdentifier, SIGKILL) }
                     if let tail = decoder.flush() { onOutput(tail) }
                     ChildProcessRegistry.shared.unregister(finished)
                     let state = flags.withLock { $0 }

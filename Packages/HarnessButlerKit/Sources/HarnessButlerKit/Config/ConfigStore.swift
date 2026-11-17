@@ -343,14 +343,7 @@ public final class ConfigStore {
         defer { if !installed { unlink(tmp) } }
         do {
             defer { close(fd) }
-            try bytes.withUnsafeBytes { buffer in
-                var offset = 0
-                while offset < buffer.count {
-                    let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
-                    if n < 0 { if errno == EINTR { continue }; throw SafeWriteError.posix("write", errno) }
-                    offset += n
-                }
-            }
+            try SafeFileWriter.writeAll(bytes, to: fd)
             guard fchmod(fd, 0o600) == 0 else { throw SafeWriteError.posix("fchmod", errno) }
             guard fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
         }

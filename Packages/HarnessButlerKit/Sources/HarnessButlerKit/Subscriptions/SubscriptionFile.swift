@@ -28,7 +28,7 @@ public struct SubscriptionFile: Sendable {
 
     public func save(_ subscriptions: [Subscription]) throws {
         let directory = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createPrivateDirectory(at: directory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(Payload(subscriptions: subscriptions)).write(to: url, options: [.atomic])

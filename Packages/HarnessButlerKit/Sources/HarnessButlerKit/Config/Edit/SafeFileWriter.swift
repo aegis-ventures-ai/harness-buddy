@@ -89,14 +89,7 @@ public struct SafeFileWriter: Sendable {
         defer { if !renamed { unlink(tmp) } }
         do {
             defer { close(fd) }
-            try newBytes.withUnsafeBytes { buf in
-                var off = 0
-                while off < buf.count {
-                    let n = Darwin.write(fd, buf.baseAddress! + off, buf.count - off)
-                    if n < 0 { if errno == EINTR { continue }; throw SafeWriteError.posix("write", errno) }
-                    off += n
-                }
-            }
+            try Self.writeAll(newBytes, to: fd)
             try Self.copyAttributes(from: target, to: fd)
             guard fchmod(fd, loaded.snapshot.mode) == 0 else { throw SafeWriteError.posix("fchmod", errno) }
             guard fsync(fd) == 0 else { throw SafeWriteError.posix("fsync", errno) }
@@ -143,9 +136,11 @@ public struct SafeFileWriter: Sendable {
             guard errno == EEXIST else { throw SafeWriteError.posix("mkdir lock", errno) }
             var st = stat()
             if stat(lockPath, &st) == 0,
-               Date().timeIntervalSince1970 - (Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9) > stale {
-                rmdir(lockPath); continue
+               Date().timeIntervalSince1970 - (Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9) > stale,
+               rmdir(lockPath) == 0 || errno == ENOENT {
+                continue   // abandoned lock removed (or already gone): try again at once
             }
+            // A lock we can't remove (not an empty directory) waits out the deadline like a held one.
             guard Date() < deadline else { throw SafeWriteError.lockTimeout }
             usleep(50_000)
         }
@@ -173,9 +168,26 @@ public struct SafeFileWriter: Sendable {
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard fd >= 0 else { throw SafeWriteError.posix("open backup", errno) }
         defer { close(fd) }
-        let ok = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) == $0.count }
-        guard ok, fsync(fd) == 0 else { throw SafeWriteError.posix("write backup", errno) }
+        do {
+            try Self.writeAll(bytes, to: fd)
+            guard fsync(fd) == 0 else { throw SafeWriteError.posix("fsync backup", errno) }
+        } catch {
+            unlink(path)   // never leave a partial backup that a restore could pick
+            throw error
+        }
         return path
+    }
+
+    /// Writes all of `bytes`, retrying short writes and EINTR.
+    static func writeAll(_ bytes: [UInt8], to fd: Int32) throws {
+        try bytes.withUnsafeBytes { buffer in
+            var offset = 0
+            while offset < buffer.count {
+                let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
+                if n < 0 { if errno == EINTR { continue }; throw SafeWriteError.posix("write", errno) }
+                offset += n
+            }
+        }
     }
 
     /// Copy extended attributes and the ACL of `path` onto the open file `fd`.

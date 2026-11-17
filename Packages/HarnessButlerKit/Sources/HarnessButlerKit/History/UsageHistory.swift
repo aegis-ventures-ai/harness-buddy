@@ -49,7 +49,7 @@ public final class UsageHistory: Sendable {
         self.url = url
         let fm = FileManager.default
         let directory = url.deletingLastPathComponent()
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.createPrivateDirectory(at: directory)
         let path = url.path(percentEncoded: false)
         // Create the file 0600 first: SQLite gives its journal files the database file's mode.
         if !fm.fileExists(atPath: path) {

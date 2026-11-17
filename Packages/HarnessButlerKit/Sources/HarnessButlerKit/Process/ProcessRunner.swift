@@ -41,8 +41,12 @@ public enum ProcessRunner {
             process.terminationHandler = { finished in
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
-                stdoutBuffer.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-                stderrBuffer.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+                // Bounded: a descendant holding the pipe open would otherwise block this forever.
+                let out = drainPipe(stdoutPipe.fileHandleForReading)
+                let err = drainPipe(stderrPipe.fileHandleForReading, timeout: out.eof ? 1 : 0.1)
+                stdoutBuffer.append(out.data)
+                stderrBuffer.append(err.data)
+                if !out.eof || !err.eof { killGroup(of: finished.processIdentifier, SIGKILL) }
                 ChildProcessRegistry.shared.unregister(finished)
                 continuation.resume(returning: ProcessResult(
                     exitCode: finished.terminationStatus,

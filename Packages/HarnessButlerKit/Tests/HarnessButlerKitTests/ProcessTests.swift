@@ -20,6 +20,30 @@ import Testing
         #expect(ContinuousClock.now - start < .seconds(5))
     }
 
+    @Test func runnerDoesNotWaitForADescendantHoldingThePipe() async throws {
+        // The wrapper exits at once; its background child keeps stdout open forever.
+        // (`tail`, not `sleep`: another suite counts running `sleep` processes.)
+        let start = ContinuousClock.now
+        let result = try await ProcessRunner.run(sh, arguments: ["-c", "/usr/bin/tail -f /dev/null & echo $!; exit 0"], timeout: .seconds(10))
+        #expect(ContinuousClock.now - start < .seconds(5))
+        #expect(result.exitCode == 0)
+        let child = try #require(pid_t(String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        // ...and the descendant was stopped with the process group.
+        var alive = true
+        for _ in 0..<50 where alive {
+            alive = kill(child, 0) == 0
+            if alive { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        #expect(!alive)
+    }
+
+    @Test func streamingDoesNotWaitForADescendantHoldingThePipe() async throws {
+        let start = ContinuousClock.now
+        let result = try await StreamingProcess.run(sh, arguments: ["-c", "echo started; /usr/bin/tail -f /dev/null & exit 0"], environment: [:]) { _ in }
+        #expect(result.exitCode == 0)
+        #expect(ContinuousClock.now - start < .seconds(6))
+    }
+
     @Test func runnerReportsLaunchFailure() async {
         await #expect(throws: ProcessRunnerError.self) {
             _ = try await ProcessRunner.run(URL(filePath: "/nonexistent/binary"))

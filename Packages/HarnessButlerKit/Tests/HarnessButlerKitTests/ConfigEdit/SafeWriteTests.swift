@@ -149,6 +149,20 @@ struct Sandbox {
         #expect(!FileManager.default.fileExists(atPath: lock))   // released
     }
 
+    @Test func staleLockThatCantBeRemovedTimesOutInsteadOfSpinning() throws {
+        let sb = try Sandbox()
+        let p = try sb.file(".claude.json", "{}")
+        let lock = p + ".lock"
+        mkdir(lock, 0o755)
+        FileManager.default.createFile(atPath: lock + "/owner", contents: Data("x".utf8))   // not empty: rmdir fails
+        var old = [timespec(tv_sec: time(nil) - 60, tv_nsec: 0), timespec(tv_sec: time(nil) - 60, tv_nsec: 0)]
+        utimensat(AT_FDCWD, lock, &old, 0)
+        let start = Date.now
+        #expect(throws: SafeWriteError.lockTimeout) { try sb.writer.withLock(lock, timeout: 0.3) { 1 } }
+        #expect(Date.now.timeIntervalSince(start) < 2)
+        #expect(FileManager.default.fileExists(atPath: lock + "/owner"))   // someone else's lock is left alone
+    }
+
     @Test func updateRetriesAndMergesWhenFileChangesUnderneath() throws {
         let sb = try Sandbox()
         let p = try sb.file(".claude.json", Fixtures.claudeJSON)

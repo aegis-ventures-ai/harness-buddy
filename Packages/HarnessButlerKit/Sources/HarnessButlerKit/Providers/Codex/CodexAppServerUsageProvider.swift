@@ -51,10 +51,11 @@ public struct CodexAppServerUsageProvider: UsageProvider {
             ])
             try session.notify("initialized")
             let result = try await session.request("account/rateLimits/read", params: ["excludeResetCreditDetails": true])
-            guard let object = result as? [String: Any] else {
+            // An answer we can't read is a failure, so the last good snapshot (or the session logs) stays.
+            guard let object = result as? [String: Any], let snapshot = Self.snapshot(from: object, fetchedAt: context.now) else {
                 return .failure(.unsupported("Unexpected rate-limit response from Codex"))
             }
-            return UsageReport(snapshot: Self.snapshot(from: object, fetchedAt: context.now))
+            return UsageReport(snapshot: snapshot)
         } catch let error as JSONRPCError {
             return .failure(Self.issue(for: error))
         } catch JSONRPCSessionError.timedOut {
@@ -78,16 +79,20 @@ public struct CodexAppServerUsageProvider: UsageProvider {
     }
 
     /// Maps an `account/rateLimits/read` result. Windows are labelled from `windowDurationMins`,
-    /// not field names, and every bucket in `rateLimitsByLimitId` is included.
-    static func snapshot(from result: [String: Any], fetchedAt: Date) -> UsageSnapshot {
+    /// not field names, and every bucket in `rateLimitsByLimitId` is included. A plan without limits
+    /// has null windows (zero windows, valid); `nil` means the shape isn't one we know.
+    static func snapshot(from result: [String: Any], fetchedAt: Date) -> UsageSnapshot? {
         var buckets: [(id: String, snapshot: [String: Any])] = []
         if let byID = result["rateLimitsByLimitId"] as? [String: Any], !byID.isEmpty {
             // Keep `codex` first, then the rest alphabetically for stable ordering.
             for key in byID.keys.sorted(by: { ($0 == "codex" ? "" : $0) < ($1 == "codex" ? "" : $1) }) {
-                if let snapshot = LenientJSON.object(byID[key]) { buckets.append((key, snapshot)) }
+                guard let snapshot = LenientJSON.object(byID[key]) else { return nil }
+                buckets.append((key, snapshot))
             }
         } else if let snapshot = LenientJSON.object(result["rateLimits"]) {
             buckets.append((LenientJSON.string(snapshot["limitId"]) ?? "codex", snapshot))
+        } else {
+            return nil
         }
 
         var windows: [UsageWindow] = []
@@ -96,8 +101,8 @@ public struct CodexAppServerUsageProvider: UsageProvider {
             plan = plan ?? LenientJSON.string(bucket.snapshot["planType"])
             let prefix = bucket.id == "codex" ? nil : (LenientJSON.string(bucket.snapshot["limitName"]) ?? bucket.id)
             for slot in ["primary", "secondary"] {
-                guard let window = LenientJSON.object(bucket.snapshot[slot]),
-                      let used = LenientJSON.double(window["usedPercent"]) else { continue }
+                guard let raw = bucket.snapshot[slot], !(raw is NSNull) else { continue }
+                guard let window = LenientJSON.object(raw), let used = LenientJSON.double(window["usedPercent"]) else { return nil }
                 let minutes = LenientJSON.double(window["windowDurationMins"])
                 let label = durationLabel(minutes: minutes)
                 windows.append(UsageWindow(

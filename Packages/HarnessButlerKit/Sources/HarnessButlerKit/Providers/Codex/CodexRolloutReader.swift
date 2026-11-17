@@ -74,8 +74,8 @@ enum CodexRolloutReader {
         normalized["primary"] = window(limits["primary"])
         normalized["secondary"] = window(limits["secondary"])
 
-        var snapshot = CodexAppServerUsageProvider.snapshot(from: ["rateLimits": normalized], fetchedAt: timestamp)
-        guard !snapshot.windows.isEmpty else { return nil }
+        guard var snapshot = CodexAppServerUsageProvider.snapshot(from: ["rateLimits": normalized], fetchedAt: timestamp),
+              !snapshot.windows.isEmpty else { return nil }
         snapshot.source = .harnessCache
         return snapshot
     }

@@ -6,10 +6,18 @@ enum ClaudeUsageParser {
     static let sessionDuration: TimeInterval = 5 * 3600
     static let weeklyDuration: TimeInterval = 7 * 86400
 
-    static func windows(from usage: [String: Any]) -> [UsageWindow] {
-        if let limits = LenientJSON.array(usage["limits"]), !limits.isEmpty {
-            let windows = limits.compactMap(window(fromLimit:))
-            if !windows.isEmpty { return windows }
+    /// The windows in a usage payload, or `nil` when it doesn't have a shape we know. A payload
+    /// we can't read must not replace the last good snapshot with an empty or shorter one.
+    static func windows(from usage: [String: Any]) -> [UsageWindow]? {
+        if let limits = usage["limits"], !(limits is NSNull) {
+            // Every row must parse: silently dropping one would hide that window.
+            guard let rows = limits as? [Any] else { return nil }
+            var windows: [UsageWindow] = []
+            for row in rows {
+                guard let row = row as? [String: Any], let window = window(fromLimit: row) else { return nil }
+                windows.append(window)
+            }
+            return windows
         }
         return legacyWindows(from: usage)
     }
@@ -39,25 +47,29 @@ enum ClaudeUsageParser {
         )
     }
 
-    /// Older fixed keys, used if `limits[]` is missing.
-    private static func legacyWindows(from usage: [String: Any]) -> [UsageWindow] {
+    /// Older fixed keys, used if `limits[]` is missing. `nil` when none of them is there either.
+    private static func legacyWindows(from usage: [String: Any]) -> [UsageWindow]? {
         let keys: [(key: String, label: String, duration: TimeInterval)] = [
             ("five_hour", "5-hour session", sessionDuration),
             ("seven_day", "weekly · all models", weeklyDuration),
             ("seven_day_opus", "weekly · opus", weeklyDuration),
             ("seven_day_sonnet", "weekly · sonnet", weeklyDuration),
         ]
-        return keys.compactMap { entry in
+        let present = keys.filter { usage[$0.key] != nil }
+        guard !present.isEmpty else { return nil }
+        var windows: [UsageWindow] = []
+        for entry in present where !(usage[entry.key] is NSNull) {   // null: not on this plan
             guard let bucket = LenientJSON.object(usage[entry.key]),
                   let utilization = LenientJSON.double(bucket["utilization"]) else { return nil }
-            return UsageWindow(
+            windows.append(UsageWindow(
                 id: entry.key,
                 label: entry.label,
                 usedPercent: utilization,
                 resetsAt: ISO8601.date(LenientJSON.string(bucket["resets_at"])),
                 duration: entry.duration
-            )
+            ))
         }
+        return windows
     }
 
     /// Extra usage credits from `spend` (preferred) or `extra_usage`.

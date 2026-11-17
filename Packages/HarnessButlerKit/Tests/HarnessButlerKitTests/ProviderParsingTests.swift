@@ -25,7 +25,7 @@ private func json(_ text: String) throws -> [String: Any] {
     """
 
     @Test func prefersGenericLimitsRows() throws {
-        let windows = ClaudeUsageParser.windows(from: try json(Self.usage))
+        let windows = try #require(ClaudeUsageParser.windows(from: try json(Self.usage)))
         #expect(windows.map(\.id) == ["session", "weekly_all", "weekly_scoped:Fable"])
         #expect(windows.map(\.label) == ["5-hour session", "weekly · all models", "weekly · fable"])
         #expect(windows.map(\.usedPercent) == [4, 17, 0])
@@ -38,9 +38,25 @@ private func json(_ text: String) throws -> [String: Any] {
     @Test func fallsBackToFixedKeysWithoutLimits() throws {
         var usage = try json(Self.usage)
         usage["limits"] = nil
-        let windows = ClaudeUsageParser.windows(from: usage)
+        let windows = try #require(ClaudeUsageParser.windows(from: usage))
         #expect(windows.map(\.id) == ["five_hour", "seven_day"])
         #expect(windows.map(\.usedPercent) == [4, 17])
+    }
+
+    @Test func unreadablePayloadsAreNotEmptySuccesses() throws {
+        // A limits row we can't read fails the whole payload instead of hiding that window.
+        var usage = try json(Self.usage)
+        var limits = try #require(usage["limits"] as? [[String: Any]])
+        limits[1]["percent"] = "high"
+        usage["limits"] = limits
+        #expect(ClaudeUsageParser.windows(from: usage) == nil)
+        // No limits[] and none of the older keys: an unknown shape.
+        #expect(ClaudeUsageParser.windows(from: ["something_new": [:]]) == nil)
+        #expect(ClaudeUsageParser.windows(from: ["limits": "soon"]) == nil)
+        // An empty limits list, or older keys set to null, are real answers.
+        #expect(ClaudeUsageParser.windows(from: ["limits": []]) == [])
+        #expect(ClaudeUsageParser.windows(from: ["five_hour": NSNull(), "seven_day": ["utilization": 5]])?.map(\.id) == ["seven_day"])
+        #expect(ClaudeUsageParser.windows(from: ["five_hour": ["utilization": "x"]]) == nil)
     }
 
     @Test func readsSpendAsCredits() throws {
@@ -119,7 +135,7 @@ private func json(_ text: String) throws -> [String: Any] {
     """
 
     @Test func mapsEveryBucketByDuration() throws {
-        let snapshot = CodexAppServerUsageProvider.snapshot(from: try json(Self.result), fetchedAt: .now)
+        let snapshot = try #require(CodexAppServerUsageProvider.snapshot(from: try json(Self.result), fetchedAt: .now))
         #expect(snapshot.planName == "team")
         #expect(snapshot.windows.map(\.id) == ["codex:primary", "codex:secondary", "codex_review:primary"])
         #expect(snapshot.windows.map(\.label) == ["5-hour session", "weekly", "1-day · code review"])
@@ -130,7 +146,17 @@ private func json(_ text: String) throws -> [String: Any] {
     @Test func fallsBackToSingleRateLimits() throws {
         var result = try json(Self.result)
         result["rateLimitsByLimitId"] = nil
-        #expect(CodexAppServerUsageProvider.snapshot(from: result, fetchedAt: .now).windows.count == 2)
+        #expect(CodexAppServerUsageProvider.snapshot(from: result, fetchedAt: .now)?.windows.count == 2)
+    }
+
+    @Test func unreadableResultsAreNotEmptySuccesses() throws {
+        // A plan without limits answers with null windows: zero windows, still a success.
+        let unlimited: [String: Any] = ["rateLimits": ["limitId": "codex", "primary": NSNull(), "secondary": NSNull()]]
+        #expect(CodexAppServerUsageProvider.snapshot(from: unlimited, fetchedAt: .now)?.windows.isEmpty == true)
+        // Unknown shapes fail, so the last good snapshot or the session logs are used instead.
+        #expect(CodexAppServerUsageProvider.snapshot(from: ["accountId": "x"], fetchedAt: .now) == nil)
+        #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimits": ["primary": ["used": 3]]], fetchedAt: .now) == nil)
+        #expect(CodexAppServerUsageProvider.snapshot(from: ["rateLimitsByLimitId": ["codex": "x"]], fetchedAt: .now) == nil)
     }
 
     @Test func errorMapping() {

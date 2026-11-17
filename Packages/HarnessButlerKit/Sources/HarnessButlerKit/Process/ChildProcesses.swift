@@ -21,8 +21,10 @@ public final class ChildProcessRegistry: Sendable {
             defer { dict.removeAll() }
             return Array(dict.values)
         }
-        for process in live where process.isRunning {
-            kill(process.processIdentifier, SIGKILL)
+        for process in live {
+            // The whole group: an updater's own children (npm, brew helpers) go too.
+            killGroup(of: process.processIdentifier, SIGKILL)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
     }
 
@@ -34,13 +36,44 @@ public final class ChildProcessRegistry: Sendable {
     }
 }
 
-/// SIGTERM, then SIGKILL after a grace period if the process is still running.
+/// SIGTERM, then SIGKILL after a grace period, to the process and the processes it started.
 func terminate(_ process: Process, grace: Duration = .seconds(2)) {
     guard process.isRunning else { return }
-    process.terminate()
     let pid = process.processIdentifier
+    process.terminate()
+    killGroup(of: pid, SIGTERM)
     Task.detached {
         try? await Task.sleep(for: grace)
+        killGroup(of: pid, SIGKILL)
         if process.isRunning { kill(pid, SIGKILL) }
+    }
+}
+
+/// Foundation's `Process` starts each child as the leader of its own process group (pgid == pid),
+/// so signalling `-pid` reaches its descendants as well. Never signals the app's own group.
+func killGroup(of pid: pid_t, _ signal: Int32) {
+    guard pid > 1, pid != getpgrp() else { return }
+    kill(-pid, signal)
+}
+
+/// What's left in a pipe once its process has exited, read for at most `timeout`: a descendant that
+/// inherited the pipe can keep it open long after the process we started is gone.
+/// Returns the data and whether end-of-file was reached.
+func drainPipe(_ handle: FileHandle, timeout: TimeInterval = 1) -> (data: Data, eof: Bool) {
+    let fd = handle.fileDescriptor
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 65_536)
+    let deadline = Date.now.addingTimeInterval(timeout)
+    while true {
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { return (data, false) }
+        var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&pfd, 1, Int32(max(1, remaining * 1000)))
+        if ready < 0 { if errno == EINTR { continue }; return (data, false) }
+        if ready == 0 { return (data, false) }
+        let count = read(fd, &buffer, buffer.count)
+        if count < 0 { if errno == EINTR || errno == EAGAIN { continue }; return (data, false) }
+        if count == 0 { return (data, true) }
+        data.append(buffer, count: count)
     }
 }

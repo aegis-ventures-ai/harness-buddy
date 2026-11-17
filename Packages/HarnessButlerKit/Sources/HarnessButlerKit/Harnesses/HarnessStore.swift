@@ -76,7 +76,7 @@ public final class HarnessStore {
     @ObservationIgnored private var fetchedNotes: [Harness: (target: SemanticVersion, entries: [ReleaseNotes.Entry])] = [:]
     @ObservationIgnored private var notesFailures: [Harness: (target: SemanticVersion, at: Date)] = [:]
 
-    public init(session: URLSession = .shared, appVersion: String) {
+    public init(session: URLSession = .providerAPI, appVersion: String) {
         self.session = session
         self.appVersion = appVersion
     }

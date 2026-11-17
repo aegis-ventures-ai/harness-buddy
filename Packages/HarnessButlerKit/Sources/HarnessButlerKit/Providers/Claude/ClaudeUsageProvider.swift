@@ -88,12 +88,13 @@ public struct ClaudeUsageProvider: UsageProvider {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch status {
         case 200:
-            guard let usage = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard let usage = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let windows = ClaudeUsageParser.windows(from: usage) else {
                 return UsageReport(snapshot: cache.snapshot, issue: .unsupported("Unexpected usage response from Anthropic"))
             }
             rejected.clear(service)
             return UsageReport(snapshot: UsageSnapshot(
-                windows: ClaudeUsageParser.windows(from: usage),
+                windows: windows,
                 planName: plan ?? cache.snapshot?.planName,
                 credits: ClaudeUsageParser.credits(from: usage),
                 fetchedAt: context.now,
@@ -142,9 +143,10 @@ struct ClaudeGlobalConfig {
         )
         if let cached = LenientJSON.object(root["cachedUsageUtilization"]),
            let fetchedAtMs = LenientJSON.double(cached["fetchedAtMs"]),
-           let usage = LenientJSON.object(cached["utilization"]) {
+           let usage = LenientJSON.object(cached["utilization"]),
+           let windows = ClaudeUsageParser.windows(from: usage) {
             config.snapshot = UsageSnapshot(
-                windows: ClaudeUsageParser.windows(from: usage),
+                windows: windows,
                 planName: ClaudeUsageParser.planName(
                     displayName: config.planDisplayName,
                     subscriptionType: config.organizationType,

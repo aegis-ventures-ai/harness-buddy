@@ -15,7 +15,8 @@ extension URLSession: HTTPTransport {
 
 extension URLSession {
     /// No disk cache, no cookies, no credential storage: tokens, keys and responses stay in memory.
-    /// Used for every provider call (usage and spend).
+    /// Used for every network call: provider usage and spend, and harness version checks (which then
+    /// also never see a stale cached "latest").
     public static let providerAPI: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
@@ -87,8 +88,10 @@ extension AdminSpendProvider {
     }
 
     /// The cursor for the next page. `has_more` without a cursor is malformed: stopping there would undercount.
+    /// `has_more` must be there and be a boolean: without it we can't tell a complete month from a cut-off one.
     static func nextPage(_ root: [String: Any]) throws(MalformedSpend) -> String? {
-        guard root["has_more"] as? Bool == true else { return nil }
+        guard let hasMore = root["has_more"] as? NSNumber, CFGetTypeID(hasMore) == CFBooleanGetTypeID() else { throw MalformedSpend() }
+        guard hasMore.boolValue else { return nil }
         guard let next = LenientJSON.string(root["next_page"]), !next.isEmpty else { throw MalformedSpend() }
         return next
     }
@@ -244,8 +247,8 @@ public struct OpenAIAdminUsageProvider: AdminSpendProvider {
         for bucket in buckets {
             guard let bucket = bucket as? [String: Any], let start = number(bucket["start_time"]) else { throw MalformedSpend() }
             let day = BillingMonth.utcDay(containing: Date(timeIntervalSince1970: start))
-            let results = bucket["results"].flatMap { $0 is NSNull ? nil : $0 }
-            guard let results = (results ?? [Any]()) as? [Any] else { throw MalformedSpend() }
+            // Every bucket lists its results; a day without spend has an empty list.
+            guard let results = bucket["results"] as? [Any] else { throw MalformedSpend() }
             for result in results {
                 guard let result = result as? [String: Any], let amount = LenientJSON.object(result["amount"]),
                       let value = number(amount["value"]) else { throw MalformedSpend() }

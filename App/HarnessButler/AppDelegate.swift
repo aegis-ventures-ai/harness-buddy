@@ -78,6 +78,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Unsaved config edits survive closing Settings but not quitting: ask first.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Stopping `npm i -g` or `brew upgrade` half-way can leave a harness broken until it's reinstalled.
+        let updating = harnesses.runs.values.filter(\.isRunning).map(\.harness.displayName).sorted()
+        if !updating.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Quit while \(updating.joined(separator: " and ")) \(updating.count == 1 ? "is" : "are") updating?"
+            alert.informativeText = "Quitting stops the update part-way, which can leave the CLI unusable until it's reinstalled."
+            alert.addButton(withTitle: "Keep Running")
+            alert.addButton(withTitle: "Quit and Stop Update")
+            NSApp.activate()
+            if alert.runModal() != .alertSecondButtonReturn { return .terminateCancel }
+        }
         let pending = config.pendingFiles
         guard !pending.isEmpty else { return .terminateNow }
         let alert = NSAlert()

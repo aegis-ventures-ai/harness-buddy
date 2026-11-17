@@ -42,7 +42,7 @@ public struct UsageCacheFile: Sendable {
     }
 
     public func save(_ snapshots: [UUID: UsageSnapshot], retries: [UUID: RetryRecord] = [:]) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createPrivateDirectory(at: url.deletingLastPathComponent())
         try JSONEncoder.cache.encode(Payload(snapshots: snapshots, retries: retries.isEmpty ? nil : retries)).write(to: url, options: [.atomic])
         // Private to the user, like the rest of the app's data (spend totals, budgets).
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
@@ -62,6 +62,15 @@ public struct RetryRecord: Codable, Hashable, Sendable {
         self.failures = failures
         self.blockedUntil = blockedUntil
         self.issue = issue
+    }
+}
+
+extension FileManager {
+    /// Creates `url` (and parents) if needed and makes sure it is 0700, also when it already existed,
+    /// e.g. created by another app or an earlier build.
+    public func createPrivateDirectory(at url: URL) throws {
+        try createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path(percentEncoded: false))
     }
 }
 

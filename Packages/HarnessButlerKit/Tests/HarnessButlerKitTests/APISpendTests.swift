@@ -312,7 +312,12 @@ private func query(_ request: URLRequest) -> [String: String] {
         #expect(await issue(#"{"data":[{"start_time":1793491200,"results":[{"amount":{"value":"n/a"}}]}],"has_more":false}"#) == bad)
         #expect(await issue(#"{"data":[{"results":[]}],"has_more":false}"#) == bad)
         #expect(await issue(#"{"data":[],"has_more":true}"#) == bad)
-        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":null}],"has_more":false}"#) == nil)
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":null}],"has_more":false}"#) == bad)
+        #expect(await issue(#"{"data":[{"start_time":1793491200}],"has_more":false}"#) == bad)
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":[]}]}"#) == bad)            // no has_more
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":[]}],"has_more":"no"}"#) == bad)
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":[]}],"has_more":0}"#) == bad)
+        #expect(await issue(#"{"data":[{"start_time":1793491200,"results":[]}],"has_more":false}"#) == nil)
     }
 }
 
