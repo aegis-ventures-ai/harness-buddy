@@ -7,14 +7,14 @@ import SwiftUI
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let store: UsageStore
     private let harnesses: HarnessStore
-    private let openSettings: () -> Void
+    private let openSettings: (SettingsPage?) -> Void
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private var clock: Timer?
     let menuBarState = MenuBarState()
     let navigation = PopoverNavigation()
 
-    init(store: UsageStore, harnesses: HarnessStore, openSettings: @escaping () -> Void) {
+    init(store: UsageStore, harnesses: HarnessStore, openSettings: @escaping (SettingsPage?) -> Void) {
         self.store = store
         self.harnesses = harnesses
         self.openSettings = openSettings
@@ -27,7 +27,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             store: store,
             harnesses: harnesses,
             navigation: navigation,
-            openSettings: { [weak self] in self?.closePopoverThen(openSettings) }
+            openSettings: { [weak self] page in self?.closePopoverThen { openSettings(page) } }
         ))
 
         if let button = statusItem.button {
@@ -147,7 +147,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func refresh() { store.refreshAll(.manual) }
-    @objc private func settings() { openSettings() }
+    @objc private func settings() { openSettings(nil) }
 
     private func closePopoverThen(_ action: @escaping () -> Void) {
         popover.performClose(nil)

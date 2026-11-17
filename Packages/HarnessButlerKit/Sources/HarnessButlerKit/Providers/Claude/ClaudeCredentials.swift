@@ -15,14 +15,14 @@ struct ClaudeCredentials: Sendable {
     static func parse(_ data: Data) -> ClaudeCredentials? {
         guard
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let oauth = JSONValue.object(root["claudeAiOauth"]),
-            let token = JSONValue.string(oauth["accessToken"]), !token.isEmpty
+            let oauth = LenientJSON.object(root["claudeAiOauth"]),
+            let token = LenientJSON.string(oauth["accessToken"]), !token.isEmpty
         else { return nil }
         return ClaudeCredentials(
             accessToken: token,
-            expiresAt: JSONValue.double(oauth["expiresAt"]).map { Date(timeIntervalSince1970: $0 / 1000) },
-            subscriptionType: JSONValue.string(oauth["subscriptionType"]),
-            rateLimitTier: JSONValue.string(oauth["rateLimitTier"])
+            expiresAt: LenientJSON.double(oauth["expiresAt"]).map { Date(timeIntervalSince1970: $0 / 1000) },
+            subscriptionType: LenientJSON.string(oauth["subscriptionType"]),
+            rateLimitTier: LenientJSON.string(oauth["rateLimitTier"])
         )
     }
 }

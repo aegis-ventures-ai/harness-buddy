@@ -6,6 +6,8 @@ struct HarnessesView: View {
     let store: UsageStore
     let harnesses: HarnessStore
     let now: Date
+    /// Opens the harness's config in Settings (M3).
+    let configure: (Harness) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,7 +30,8 @@ struct HarnessesView: View {
                     now: now,
                     update: { harnesses.update(harness) },
                     cancel: { harnesses.cancelUpdate(harness) },
-                    dismiss: { harnesses.dismissRun(harness) }
+                    dismiss: { harnesses.dismissRun(harness) },
+                    configure: store.subscriptions.contains { $0.harness == harness } ? { configure(harness) } : nil
                 )
                 if harness != shown.last { Divider().padding(.leading, 46) }
             }
@@ -62,6 +65,7 @@ private struct HarnessRow: View {
     let update: () -> Void
     let cancel: () -> Void
     let dismiss: () -> Void
+    let configure: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -145,6 +149,10 @@ private struct HarnessRow: View {
             } else {
                 Text("update manually").font(Theme.mono(10)).foregroundStyle(.secondary)
             }
+        } else if let configure {
+            Button("configure", action: configure)
+                .controlSize(.small)
+                .help("Edit \(harness.displayName) settings, MCP servers and env")
         }
     }
 
@@ -215,6 +223,7 @@ enum PathFormatting {
     static func abbreviate(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let normalized = "/" + home
-        return path.hasPrefix(normalized + "/") ? "~" + path.dropFirst(normalized.count) : path
+        let trimmed = path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
+        return trimmed.hasPrefix(normalized + "/") ? "~" + trimmed.dropFirst(normalized.count) : trimmed
     }
 }

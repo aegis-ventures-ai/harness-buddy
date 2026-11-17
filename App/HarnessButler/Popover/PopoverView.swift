@@ -8,7 +8,7 @@ struct PopoverView: View {
     let store: UsageStore
     let harnesses: HarnessStore
     let navigation: PopoverNavigation
-    let openSettings: () -> Void
+    let openSettings: (SettingsPage?) -> Void
 
     private var page: Page {
         get { navigation.page }
@@ -32,7 +32,10 @@ struct PopoverView: View {
                         Divider()
                         switch page {
                         case .usage: list(now: context.date)
-                        case .harnesses: HarnessesView(store: store, harnesses: harnesses, now: context.date)
+                        case .harnesses: HarnessesView(store: store, harnesses: harnesses, now: context.date) { harness in
+                            let profile = ConfigProfile.profiles(for: store.subscriptions).first { $0.harness == harness }
+                            openSettings(profile.map { .profile($0.id) } ?? .subscriptions)
+                        }
                         }
                     }
                 }
@@ -80,7 +83,7 @@ struct PopoverView: View {
             } label: { Image(systemName: "arrow.clockwise") }
                 .disabled(page == .harnesses && harnesses.isChecking)
                 .help(page == .usage ? "Refresh all (at most once a minute per subscription)" : "Check for harness updates now")
-            Button(action: openSettings) { Image(systemName: "gearshape") }
+            Button { openSettings(nil) } label: { Image(systemName: "gearshape") }
                 .help("Settings")
         }
         .buttonStyle(.borderless)
@@ -133,7 +136,7 @@ struct PopoverView: View {
             Text("Sign in to Claude Code, Codex or Grok Build, or add a config directory in Settings.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-            Button("Open Settings", action: openSettings)
+            Button("Open Settings") { openSettings(.subscriptions) }
         }
         .padding(20)
         .frame(maxWidth: .infinity)

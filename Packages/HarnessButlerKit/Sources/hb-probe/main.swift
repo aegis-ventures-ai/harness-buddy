@@ -16,6 +16,30 @@ let forceLive = CommandLine.arguments.contains("--live")
 let offlineCodex = CommandLine.arguments.contains("--offline-codex")
 let claude = ClaudeUsageProvider()
 
+// --config: parse each profile's config files in memory (never writes). Prints only whether they
+// parse, how many MCP servers each has and which curated keys are set, never values.
+if CommandLine.arguments.contains("--config") {
+    for profile in ConfigProfile.profiles(for: subscriptions, homeDirectory: home) {
+        print("\n\(profile.harness.displayName) · \(profile.subscriptionNames.count) subscription(s) · \(PathExpansion.abbreviate(profile.home.path(percentEncoded: false), homeDirectory: home))")
+        for ref in profile.files(homeDirectory: home) {
+            do {
+                let state = try ConfigStore.read(ref)
+                guard state.exists else { print("  \(ref.kind.fileName): missing (saving creates it)"); continue }
+                let fields = CuratedSettings.general(profile.harness).filter { $0.file == ref.kind }
+                let set = fields.filter { $0.value(in: state.original) != nil }.map(\.label)
+                let mapping = MCPServerMapping.forHarness(profile.harness)
+                let servers = mapping.file == ref.kind ? "\(mapping.servers(in: state.original).count) MCP server(s)" : ""
+                var noOp = state.original
+                try noOp.apply([])
+                print("  \(ref.kind.fileName): parses ✓  round-trip identical: \(noOp.bytes == state.loaded?.bytes)  \(servers)  set: \(set.joined(separator: ", "))\(state.isSymlink ? "  (symlink)" : "")")
+            } catch {
+                print("  \(ref.kind.fileName): ✗ \(String(describing: error).prefix(200))")
+            }
+        }
+    }
+    exit(0)
+}
+
 // --harnesses: detect installs and check latest versions (never runs an update).
 if CommandLine.arguments.contains("--harnesses") {
     let store = HarnessStore(appVersion: "probe")

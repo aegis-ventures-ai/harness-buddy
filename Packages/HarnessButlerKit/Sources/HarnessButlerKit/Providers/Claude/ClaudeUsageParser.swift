@@ -7,7 +7,7 @@ enum ClaudeUsageParser {
     static let weeklyDuration: TimeInterval = 7 * 86400
 
     static func windows(from usage: [String: Any]) -> [UsageWindow] {
-        if let limits = JSONValue.array(usage["limits"]), !limits.isEmpty {
+        if let limits = LenientJSON.array(usage["limits"]), !limits.isEmpty {
             let windows = limits.compactMap(window(fromLimit:))
             if !windows.isEmpty { return windows }
         }
@@ -16,9 +16,9 @@ enum ClaudeUsageParser {
 
     /// The generic, forward-compatible `limits[]` rows.
     private static func window(fromLimit limit: [String: Any]) -> UsageWindow? {
-        guard let kind = JSONValue.string(limit["kind"]), let percent = JSONValue.double(limit["percent"]) else { return nil }
-        let group = JSONValue.string(limit["group"])
-        let scopeModel = JSONValue.string(JSONValue.object(JSONValue.object(limit["scope"])?["model"])?["display_name"])
+        guard let kind = LenientJSON.string(limit["kind"]), let percent = LenientJSON.double(limit["percent"]) else { return nil }
+        let group = LenientJSON.string(limit["group"])
+        let scopeModel = LenientJSON.string(LenientJSON.object(LenientJSON.object(limit["scope"])?["model"])?["display_name"])
         let duration: TimeInterval? = switch group ?? kind {
         case "session": sessionDuration
         case "weekly": weeklyDuration
@@ -34,7 +34,7 @@ enum ClaudeUsageParser {
             id: scopeModel.map { "\(kind):\($0)" } ?? kind,
             label: label,
             usedPercent: percent,
-            resetsAt: ISO8601.date(JSONValue.string(limit["resets_at"])),
+            resetsAt: ISO8601.date(LenientJSON.string(limit["resets_at"])),
             duration: duration
         )
     }
@@ -48,13 +48,13 @@ enum ClaudeUsageParser {
             ("seven_day_sonnet", "weekly · sonnet", weeklyDuration),
         ]
         return keys.compactMap { entry in
-            guard let bucket = JSONValue.object(usage[entry.key]),
-                  let utilization = JSONValue.double(bucket["utilization"]) else { return nil }
+            guard let bucket = LenientJSON.object(usage[entry.key]),
+                  let utilization = LenientJSON.double(bucket["utilization"]) else { return nil }
             return UsageWindow(
                 id: entry.key,
                 label: entry.label,
                 usedPercent: utilization,
-                resetsAt: ISO8601.date(JSONValue.string(bucket["resets_at"])),
+                resetsAt: ISO8601.date(LenientJSON.string(bucket["resets_at"])),
                 duration: entry.duration
             )
         }
@@ -62,23 +62,23 @@ enum ClaudeUsageParser {
 
     /// Extra usage credits from `spend` (preferred) or `extra_usage`.
     static func credits(from usage: [String: Any]) -> UsageCredits? {
-        if let spend = JSONValue.object(usage["spend"]), spend["enabled"] as? Bool == true,
-           let used = JSONValue.object(spend["used"]), let usedMinor = JSONValue.int(used["amount_minor"]) {
-            let limit = JSONValue.object(spend["limit"])
+        if let spend = LenientJSON.object(usage["spend"]), spend["enabled"] as? Bool == true,
+           let used = LenientJSON.object(spend["used"]), let usedMinor = LenientJSON.int(used["amount_minor"]) {
+            let limit = LenientJSON.object(spend["limit"])
             return UsageCredits(
                 usedMinor: usedMinor,
-                limitMinor: JSONValue.int(limit?["amount_minor"]),
-                currency: JSONValue.string(used["currency"]) ?? "USD",
-                exponent: JSONValue.int(used["exponent"]) ?? 2
+                limitMinor: LenientJSON.int(limit?["amount_minor"]),
+                currency: LenientJSON.string(used["currency"]) ?? "USD",
+                exponent: LenientJSON.int(used["exponent"]) ?? 2
             )
         }
-        if let extra = JSONValue.object(usage["extra_usage"]), extra["is_enabled"] as? Bool == true,
-           let used = JSONValue.double(extra["used_credits"]) {
+        if let extra = LenientJSON.object(usage["extra_usage"]), extra["is_enabled"] as? Bool == true,
+           let used = LenientJSON.double(extra["used_credits"]) {
             return UsageCredits(
                 usedMinor: Int(used.rounded()),
-                limitMinor: JSONValue.int(extra["monthly_limit"]),
-                currency: JSONValue.string(extra["currency"]) ?? "USD",
-                exponent: JSONValue.int(extra["decimal_places"]) ?? 2
+                limitMinor: LenientJSON.int(extra["monthly_limit"]),
+                currency: LenientJSON.string(extra["currency"]) ?? "USD",
+                exponent: LenientJSON.int(extra["decimal_places"]) ?? 2
             )
         }
         return nil

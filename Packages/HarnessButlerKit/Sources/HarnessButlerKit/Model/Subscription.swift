@@ -45,15 +45,15 @@ public struct Subscription: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-enum PathExpansion {
-    static func expandTilde(_ path: String, homeDirectory: URL) -> String {
+public enum PathExpansion {
+    public static func expandTilde(_ path: String, homeDirectory: URL) -> String {
         let home = homeDirectory.path(percentEncoded: false).trimmingSuffix("/")
         if path == "~" { return home }
         if path.hasPrefix("~/") { return home + path.dropFirst(1) }
         return path
     }
 
-    static func abbreviate(_ path: String, homeDirectory: URL) -> String {
+    public static func abbreviate(_ path: String, homeDirectory: URL) -> String {
         let home = homeDirectory.path(percentEncoded: false).trimmingSuffix("/")
         let trimmed = path.count > 1 ? path.trimmingSuffix("/") : path
         if trimmed == home { return "~" }

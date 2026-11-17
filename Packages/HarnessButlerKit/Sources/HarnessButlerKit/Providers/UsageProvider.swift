@@ -26,7 +26,7 @@ public struct UsageFetchContext: Sendable {
 }
 
 /// Lenient JSON accessors for undocumented, fast-moving payloads.
-enum JSONValue {
+enum LenientJSON {
     static func double(_ value: Any?) -> Double? { (value as? NSNumber)?.doubleValue }
     static func int(_ value: Any?) -> Int? { (value as? NSNumber)?.intValue }
     static func string(_ value: Any?) -> String? { value as? String }

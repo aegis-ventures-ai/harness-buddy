@@ -54,13 +54,13 @@ enum CodexRolloutReader {
 
     static func snapshot(fromLine line: Data) -> UsageSnapshot? {
         guard let event = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let payload = JSONValue.object(event["payload"]),
-              JSONValue.string(payload["type"]) == "token_count",
-              let limits = JSONValue.object(payload["rate_limits"]),
-              let timestamp = ISO8601.date(JSONValue.string(event["timestamp"])) else { return nil }
+              let payload = LenientJSON.object(event["payload"]),
+              LenientJSON.string(payload["type"]) == "token_count",
+              let limits = LenientJSON.object(payload["rate_limits"]),
+              let timestamp = ISO8601.date(LenientJSON.string(event["timestamp"])) else { return nil }
 
         func window(_ raw: Any?) -> [String: Any]? {
-            guard let raw = JSONValue.object(raw) else { return nil }
+            guard let raw = LenientJSON.object(raw) else { return nil }
             var window: [String: Any] = [:]
             window["usedPercent"] = raw["used_percent"]
             window["windowDurationMins"] = raw["window_minutes"]

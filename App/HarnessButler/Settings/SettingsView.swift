@@ -1,31 +1,102 @@
 import HarnessButlerKit
 import SwiftUI
 
-enum SettingsTab: String, Hashable {
+/// A page in the settings sidebar.
+enum SettingsPage: Hashable {
     case subscriptions, menubar, about
+    /// A harness profile's config (C-1), by `ConfigProfile.id`.
+    case profile(String)
+
+    /// `--open-settings subscriptions|menubar|about|config` (debug builds).
+    init?(argument: String) {
+        switch argument {
+        case "subscriptions": self = .subscriptions
+        case "menubar": self = .menubar
+        case "about": self = .about
+        default: return nil
+        }
+    }
 }
 
-/// M1 settings: manage subscriptions (U-2) and menubar pinning/order (M-1).
-/// Harness config pages (C-1…) arrive in M3.
+/// Shared so the popover and notifications can open a given page.
+@Observable
+final class SettingsNavigation {
+    var page: SettingsPage? = .subscriptions
+}
+
+/// Settings: app pages, then one page per harness profile (mockup "settings window").
 struct SettingsView: View {
     let store: UsageStore
     let harnesses: HarnessStore
+    let config: ConfigStore
     let menuBar: MenuBarState
-    @State var tab: SettingsTab = .subscriptions
+    @Bindable var navigation: SettingsNavigation
 
     var body: some View {
-        TabView(selection: $tab) {
-            Tab("Subscriptions", systemImage: "person.2", value: .subscriptions) {
-                SubscriptionsSettings(store: store)
+        NavigationSplitView {
+            List(selection: $navigation.page) {
+                Section("App") {
+                    Label("Subscriptions", systemImage: "person.2").tag(SettingsPage.subscriptions)
+                    Label("Menubar", systemImage: "menubar.rectangle").tag(SettingsPage.menubar)
+                    Label("About", systemImage: "info.circle").tag(SettingsPage.about)
+                }
+                ForEach(Harness.allCases) { harness in
+                    let profiles = config.profiles.filter { $0.harness == harness }
+                    if !profiles.isEmpty {
+                        Section {
+                            ForEach(profiles) { profile in
+                                ProfileSidebarRow(profile: profile, config: config).tag(SettingsPage.profile(profile.id))
+                            }
+                        } header: {
+                            HStack(spacing: 4) {
+                                Text(harness.displayName)
+                                if harnesses.status(for: harness).isUpdateAvailable {
+                                    Text("●").foregroundStyle(Theme.accent).help("Update available")
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            Tab("Menubar", systemImage: "menubar.rectangle", value: .menubar) {
-                MenuBarSettings(store: store, menuBar: menuBar)
-            }
-            Tab("About", systemImage: "info.circle", value: .about) {
-                AboutSettings()
+            .navigationSplitViewColumnWidth(min: 200, ideal: 230)
+        } detail: {
+            switch navigation.page {
+            case .subscriptions, nil: SubscriptionsSettings(store: store)
+            case .menubar: MenuBarSettings(store: store, menuBar: menuBar)
+            case .about: AboutSettings()
+            case .profile(let id):
+                if let profile = config.profiles.first(where: { $0.id == id }) {
+                    ProfileConfigView(profile: profile, config: config, harnesses: harnesses).id(profile.id)
+                } else {
+                    ContentUnavailableView("Profile not found", systemImage: "questionmark.folder",
+                                           description: Text("Its subscription may have been removed."))
+                }
             }
         }
-        .frame(minWidth: 600, minHeight: 420)
+        .frame(minWidth: 820, minHeight: 540)
+        .onAppear { config.setSubscriptions(store.subscriptions) }
+        .onChange(of: store.subscriptions) { _, new in config.setSubscriptions(new) }
+    }
+}
+
+private struct ProfileSidebarRow: View {
+    let profile: ConfigProfile
+    let config: ConfigStore
+
+    var body: some View {
+        let pending = config.files(of: profile).contains { config.state($0)?.hasChanges == true }
+        HStack(spacing: 8) {
+            HarnessAvatar(harness: profile.harness, size: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profile.displayName).lineLimit(1)
+                Text(PathFormatting.abbreviate(profile.home.path(percentEncoded: false)))
+                    .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            if pending {
+                Spacer()
+                Circle().fill(Theme.warn).frame(width: 7, height: 7).help("Unsaved changes")
+            }
+        }
     }
 }
 

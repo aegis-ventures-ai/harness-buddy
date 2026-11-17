@@ -129,15 +129,15 @@ struct ClaudeGlobalConfig {
     }
 
     static func parse(_ root: [String: Any]) -> ClaudeGlobalConfig {
-        let account = JSONValue.object(root["oauthAccount"])
+        let account = LenientJSON.object(root["oauthAccount"])
         var config = ClaudeGlobalConfig(
-            planDisplayName: JSONValue.string(account?["planDisplayName"]),
-            organizationType: JSONValue.string(account?["organizationType"]),
-            rateLimitTier: JSONValue.string(account?["userRateLimitTier"]) ?? JSONValue.string(account?["organizationRateLimitTier"])
+            planDisplayName: LenientJSON.string(account?["planDisplayName"]),
+            organizationType: LenientJSON.string(account?["organizationType"]),
+            rateLimitTier: LenientJSON.string(account?["userRateLimitTier"]) ?? LenientJSON.string(account?["organizationRateLimitTier"])
         )
-        if let cached = JSONValue.object(root["cachedUsageUtilization"]),
-           let fetchedAtMs = JSONValue.double(cached["fetchedAtMs"]),
-           let usage = JSONValue.object(cached["utilization"]) {
+        if let cached = LenientJSON.object(root["cachedUsageUtilization"]),
+           let fetchedAtMs = LenientJSON.double(cached["fetchedAtMs"]),
+           let usage = LenientJSON.object(cached["utilization"]) {
             config.snapshot = UsageSnapshot(
                 windows: ClaudeUsageParser.windows(from: usage),
                 planName: ClaudeUsageParser.planName(

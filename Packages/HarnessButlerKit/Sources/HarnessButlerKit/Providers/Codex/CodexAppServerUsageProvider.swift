@@ -84,27 +84,27 @@ public struct CodexAppServerUsageProvider: UsageProvider {
         if let byID = result["rateLimitsByLimitId"] as? [String: Any], !byID.isEmpty {
             // Keep `codex` first, then the rest alphabetically for stable ordering.
             for key in byID.keys.sorted(by: { ($0 == "codex" ? "" : $0) < ($1 == "codex" ? "" : $1) }) {
-                if let snapshot = JSONValue.object(byID[key]) { buckets.append((key, snapshot)) }
+                if let snapshot = LenientJSON.object(byID[key]) { buckets.append((key, snapshot)) }
             }
-        } else if let snapshot = JSONValue.object(result["rateLimits"]) {
-            buckets.append((JSONValue.string(snapshot["limitId"]) ?? "codex", snapshot))
+        } else if let snapshot = LenientJSON.object(result["rateLimits"]) {
+            buckets.append((LenientJSON.string(snapshot["limitId"]) ?? "codex", snapshot))
         }
 
         var windows: [UsageWindow] = []
         var plan: String?
         for bucket in buckets {
-            plan = plan ?? JSONValue.string(bucket.snapshot["planType"])
-            let prefix = bucket.id == "codex" ? nil : (JSONValue.string(bucket.snapshot["limitName"]) ?? bucket.id)
+            plan = plan ?? LenientJSON.string(bucket.snapshot["planType"])
+            let prefix = bucket.id == "codex" ? nil : (LenientJSON.string(bucket.snapshot["limitName"]) ?? bucket.id)
             for slot in ["primary", "secondary"] {
-                guard let window = JSONValue.object(bucket.snapshot[slot]),
-                      let used = JSONValue.double(window["usedPercent"]) else { continue }
-                let minutes = JSONValue.double(window["windowDurationMins"])
+                guard let window = LenientJSON.object(bucket.snapshot[slot]),
+                      let used = LenientJSON.double(window["usedPercent"]) else { continue }
+                let minutes = LenientJSON.double(window["windowDurationMins"])
                 let label = durationLabel(minutes: minutes)
                 windows.append(UsageWindow(
                     id: "\(bucket.id):\(slot)",
                     label: prefix.map { "\(label) · \($0)" } ?? label,
                     usedPercent: used,
-                    resetsAt: JSONValue.double(window["resetsAt"]).map { Date(timeIntervalSince1970: $0) },
+                    resetsAt: LenientJSON.double(window["resetsAt"]).map { Date(timeIntervalSince1970: $0) },
                     duration: minutes.map { $0 * 60 }
                 ))
             }

@@ -21,15 +21,18 @@ make probe    # print one usage read per subscription, no UI (add --live via: cd
 
 The Xcode project is generated from `project.yml` and isn't committed. Run `make project` after pulling.
 
-`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback; `--harnesses` prints detected installs, latest versions and update commands (it never runs an update); add `--notes` to also fetch and print the release notes for each harness's latest version.
+`hb-probe` flags: `--live` skips the harness caches and forces live reads; `--offline-codex` hides the `codex` binary to exercise the session-log fallback; `--config` parses each profile's config files in memory and prints whether they parse and round-trip, MCP server counts and which curated keys are set (no values; it never writes); `--harnesses` prints detected installs, latest versions and update commands (it never runs an update); add `--notes` to also fetch and print the release notes for each harness's latest version.
 
-Debug-build launch flags (pass after `open … --args`): `--open-popover [harnesses]` opens the popover on launch (and keeps it open until you click the item); `--expand-notes` starts release notes expanded; `--open-settings [subscriptions|menubar|about]` opens Settings on that tab.
+Debug-build launch flags (pass after `open … --args`): `--open-popover [harnesses]` opens the popover on launch (and keeps it open until you click the item); `--expand-notes` starts release notes expanded; `--open-settings [subscriptions|menubar|about|claude|codex|grok]` opens Settings on that page; `--config-tab general|permissions|mcp|env|raw|backups` picks the config tab; `--demo-pending` stages one harmless edit to the Grok config in memory (it's never saved) and `--demo-review` opens its diff, for UI checks.
 
 ## Data the app keeps
 
 Everything lives in `~/Library/Application Support/HarnessButler/` (mode 0700):
 - `subscriptions.json`: names, harness, home-directory override, pinned flag and order.
 - `usage-cache.json`: last good usage per subscription (percentages, reset times, plan names), so the popover isn't empty after a relaunch.
+- `Backups/<file kind>-<hash>/`: the previous version of a harness config file, written before every save from Settings (mode 0600, kept 30 days). Env blocks can hold tokens, so these stay private to your user.
+
+Harness config files are only written when you click Save in the diff review. For `~/.claude.json` only the `mcpServers` key is read or written, under Claude Code's own `.claude.json.lock`.
 
 Preferences (update badge, update notifications on/off) and the list of update versions already announced are in the app's UserDefaults.
 

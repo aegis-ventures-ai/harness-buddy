@@ -185,7 +185,19 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
 1. **M0 — Spikes: ✅ done 2026-11-17.** See `docs/spikes/01–04`.
 2. **M1 — Usage MVP: ✅ done 2026-11-17.** Discovery, popover with groups/bars/pace, pinning, percent menubar mode, Claude + Codex + **Grok** (moved up from M4), passive fallbacks, snapshot cache, menubar width warning.
 3. **M2 — Updates ✅ done:** detection, version sources, one-click update with log. Implemented: H-1…H-7 and M-4. H-5 shows the notes for every version after the installed one, up to the latest (collapsed to four bullets, expandable, with a link to the full notes). H-6 is off by default, asks for notification permission when it is turned on, announces each version once, and opens the harnesses page when clicked.
-4. **M3 — Config:** settings window, curated forms + MCP for all three, raw editor, diff/backup/restore. Productionising `ConfigEdit` is estimated at 12–14 engineer-days.
+4. **M3 — Config (in progress):** settings window, curated forms + MCP for all three, raw editor, diff/backup/restore. Productionising `ConfigEdit` is estimated at 12–14 engineer-days.
+   - Implemented:
+     - The spike's `ConfigEdit` code moved into the Kit (`Config/Edit`). The scanner now enforces TOML 1.0, rejecting multi-line or trailing-comma inline tables and the `\e`/`\x` escapes.
+     - C-1: a settings sidebar with one page per harness profile.
+     - C-2: the General tab, plus per-model effort for Claude, Claude's allow/ask/deny rules, and an Env tab.
+     - C-3: add, edit, enable/disable and remove MCP servers. Edits are field-level, so keys we don't model survive.
+     - C-4: the raw editor, validated as you type. It isn't offered for `.claude.json`.
+     - C-5: diff review → outside-change check → 0600 backup → atomic write → read-back check. Restore is one click. `.claude.json` writes take the CLI's own lock, re-apply only `mcpServers`, and diff only that key.
+     - C-6, C-7 (file watching, plus reload or re-apply after an outside change), C-10, C-11 and C-12.
+   - Open:
+     - C-8: read-only hooks and plugins (P1).
+     - C-9: copy an MCP server to another harness (P2).
+     - Hardening from spike 04: the toml-test corpus, property tests, an xattr policy, and refreshing the lock mtime while holding it.
 5. **M4 — API spend + polish:** Anthropic/OpenAI admin usage, budgets, notifications, history sparklines, worst-of and mini-bar menubar modes.
 
 ## 9. Risks

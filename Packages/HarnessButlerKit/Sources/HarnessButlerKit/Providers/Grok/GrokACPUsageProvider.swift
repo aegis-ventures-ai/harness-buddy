@@ -72,12 +72,12 @@ public struct GrokACPUsageProvider: UsageProvider {
 
     /// Maps a `_x.ai/billing` result to one window (weekly on the plans seen so far).
     static func snapshot(from result: [String: Any], fetchedAt: Date) -> UsageSnapshot? {
-        guard let config = JSONValue.object(result["config"]),
-              let used = JSONValue.double(config["creditUsagePercent"]) else { return nil }
-        let period = JSONValue.object(config["currentPeriod"])
-        let start = ISO8601.date(JSONValue.string(period?["start"]))
-        let end = ISO8601.date(JSONValue.string(period?["end"]))
-        let type = JSONValue.string(period?["type"]) ?? ""
+        guard let config = LenientJSON.object(result["config"]),
+              let used = LenientJSON.double(config["creditUsagePercent"]) else { return nil }
+        let period = LenientJSON.object(config["currentPeriod"])
+        let start = ISO8601.date(LenientJSON.string(period?["start"]))
+        let end = ISO8601.date(LenientJSON.string(period?["end"]))
+        let type = LenientJSON.string(period?["type"]) ?? ""
         let label = switch type {
         case "USAGE_PERIOD_TYPE_WEEKLY": "weekly"
         case "USAGE_PERIOD_TYPE_MONTHLY": "monthly"
@@ -85,7 +85,7 @@ public struct GrokACPUsageProvider: UsageProvider {
         default: "usage period"
         }
         let duration: TimeInterval? = if let start, let end, end > start { end.timeIntervalSince(start) } else { nil }
-        let tier = JSONValue.string(result["subscription_tier"]).map { $0.lowercased() }
+        let tier = LenientJSON.string(result["subscription_tier"]).map { $0.lowercased() }
         return UsageSnapshot(
             windows: [UsageWindow(id: "credits", label: label, usedPercent: used, resetsAt: end, duration: duration)],
             planName: tier,
