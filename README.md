@@ -5,6 +5,7 @@ A macOS menubar app that shows how much of each AI coding subscription you have 
 - Scope and requirements: [`docs/requirements.md`](docs/requirements.md)
 - UI mockups: [`docs/mockups/index.html`](docs/mockups/index.html)
 - M0 spike write-ups: [`docs/spikes/`](docs/spikes/)
+- Release history: [`CHANGELOG.md`](CHANGELOG.md)
 
 ## Requirements
 
