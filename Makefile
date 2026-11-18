@@ -1,4 +1,4 @@
-.PHONY: project build test run probe clean
+.PHONY: project build test run probe release clean
 
 DERIVED := .build/xcode
 APP := $(DERIVED)/Build/Products/Debug/Harness\ Butler.app
@@ -20,6 +20,10 @@ run: build
 # Print what each discovered subscription reports, without the UI.
 probe:
 	cd Packages/HarnessButlerKit && swift run hb-probe
+
+# Developer ID-signed, notarized DMG in .build/release (see scripts/release.sh).
+release:
+	scripts/release.sh
 
 clean:
 	rm -rf $(DERIVED) HarnessButler.xcodeproj

@@ -156,7 +156,7 @@ Verified on this machine unless marked _(verify)_.
 - **Safety:** read-only by default for everything except explicit config saves and update actions. Backups kept for 30 days.
 - **Resilience:** one provider failing never blanks the others; each row shows its own error state and last-good data with age.
 - **Appearance:** follows system light/dark; monospace, terminal-inspired look (see mockups); full VoiceOver labels for bars ("Claude Code work, weekly all models, 84 percent left, resets in 3 days").
-- **Distribution:** **non-sandboxed** app (Developer ID, Hardened Runtime, notarized). The sandbox would block spawning `/usr/bin/security` and the harness CLIs, and reading their home dirs. Signed DMG via GitHub Releases for the team; Sparkle for self-update (P1).
+- **Distribution:** **non-sandboxed** app (Developer ID, Hardened Runtime, notarized). The sandbox would block spawning `/usr/bin/security` and the harness CLIs, and reading their home dirs. Signed DMG via GitHub Releases for the team; Sparkle for self-update (P1, done in 1.1.0: daily appcast check from the latest GitHub release, EdDSA-signed updates and feed, ask before installing unless the user opts in). Open at login through `SMAppService` (1.1.0).
 - **Child processes:** every spawned harness process (`codex app-server`, `grok agent stdio`, `security`) has a timeout, is killed after use, and never outlives the app.
 - **Minimum OS:** macOS 27. No back-deployment shims; use current SwiftUI, Observation, and Swift concurrency APIs freely, and adopt the current system design language for materials and controls.
 
@@ -242,7 +242,7 @@ Each provider/harness is an adapter behind a protocol so adding a fourth (e.g. G
        - per-subscription chips in the detail view; clicking an alert opens that subscription.
      - M-2: the worst-of mode (one ring for the most constrained pinned subscription) and the mini-bars mode (shortest and longest window per subscription). Both are chosen in Settings → Menubar with a live preview, and keep the M-3 status glyphs.
    - Not done:
-     - Sparkle auto-update (distribution, P1). It needs a signed release pipeline and an appcast host, which is better set up deliberately than unattended.
+     - Sparkle auto-update (distribution, P1). Done in 1.1.0 (see §6), with `scripts/release.sh` and `scripts/publish.sh`.
      - Admin-key reads haven't been run against the live APIs; there was no key available. The request and response handling is covered by fixture tests built from the providers' documented shapes, and can be checked with `hb-probe --api-env`.
 
 ## 9. Risks

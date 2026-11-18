@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var updateNotifier: UpdateNotifier?
     private var usageNotifier: UsageNotifier?
     private var settingsWindow: NSWindow?
+    private let updater = AppUpdater()
+    private let loginItem = LoginItem()
 
     static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -56,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 try? await Task.sleep(for: .seconds(3))
                 statusItem?.openPopoverForDebugging()
             }
-            // --open-settings [subscriptions|menubar|about|claude|codex|grok]
+            // --open-settings [general|subscriptions|menubar|about|claude|codex|grok]
             if let index = CommandLine.arguments.firstIndex(of: "--open-settings") {
                 let name = CommandLine.arguments.dropFirst(index + 1).first ?? ""
                 if let harness = Harness(rawValue: name) {
@@ -119,7 +121,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let page { settingsNavigation.page = page }
         if settingsWindow == nil {
             let view = SettingsView(store: store, harnesses: harnesses, config: config,
-                                    menuBar: statusItem?.menuBarState ?? MenuBarState(), navigation: settingsNavigation)
+                                    menuBar: statusItem?.menuBarState ?? MenuBarState(), updater: updater, loginItem: loginItem,
+                                    navigation: settingsNavigation)
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "Harness Butler Settings"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]

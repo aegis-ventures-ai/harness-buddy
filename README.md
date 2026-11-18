@@ -37,11 +37,13 @@ Everything lives in `~/Library/Application Support/HarnessButler/` (mode 0700, f
 
 Harness config files are only written when you click Save in the diff review. For `~/.claude.json` only the `mcpServers` key is read or written, under Claude Code's own `.claude.json.lock`.
 
-Preferences (update badge, update and usage notifications on/off, per-subscription alert thresholds, menubar mode) and the list of update versions already announced are in the app's UserDefaults.
+Preferences (update badge, update and usage notifications on/off, per-subscription alert thresholds, menubar mode) and the list of update versions already announced are in the app's UserDefaults. So are Sparkle's app-update settings (`SUEnableAutomaticChecks`, `SUAutomaticallyUpdate`, `SULastCheckTime`); a downloaded app update waits in `~/Library/Caches/ai.aegisventures.harnessbutler/org.sparkle-project.Sparkle/` until it's installed. "Open at login" is a system login item (System Settings → General → Login Items), not an app preference.
 
 No tokens are ever written to disk. Admin API keys for API subscriptions are stored only in the login Keychain (generic password, service `ai.aegisventures.harnessbutler.admin-key`, one item per subscription ID), are deleted when the subscription is removed, and are only ever sent to the provider they belong to.
 
 ## Network requests
+
+App updates (1.1.0 on, release builds only): once a day, or when you click Check for Updates Now, an unauthenticated GET of `github.com/aegis-ventures-ai/harness-buddy/releases/latest/download/appcast.xml`, and, when there's an update you accept, the DMG it names from the same repo's releases. No system profile is sent.
 
 Besides the providers' own usage endpoints (for API subscriptions: `GET api.anthropic.com/v1/organizations/analytics/cost` with hourly buckets, or `GET api.openai.com/v1/organization/costs` with daily buckets, every 30 minutes), the app only makes unauthenticated GETs for update checks (every 6 h) and release notes (once per new version):
 - Claude Code: `downloads.claude.ai/claude-code-releases/{latest|stable}`; notes from the top of `raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md` (HTTP Range, 256 KB).
@@ -59,4 +61,13 @@ Besides the providers' own usage endpoints (for API subscriptions: `GET api.anth
 
 ## Distribution
 
-Non-sandboxed by design (requirements §6): the app spawns `/usr/bin/security` and the harness CLIs. Release builds are to be signed with Developer ID, Hardened Runtime and notarized. Local Debug builds are ad-hoc signed.
+Non-sandboxed by design (requirements §6): the app spawns `/usr/bin/security` and the harness CLIs. Local Debug builds are ad-hoc signed and never update themselves.
+
+Releases are signed with Developer ID and the Hardened Runtime, notarized, and updated in place by Sparkle:
+
+1. Bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` (Sparkle compares this one) in `project.yml`, and add the version's section to `CHANGELOG.md`.
+2. Commit, tag `vX.Y.Z` and push both.
+3. `make release` (`scripts/release.sh`) builds from the tag, signs Sparkle's helpers, checks every executable's signature, notarizes and staples the DMG, and writes a signed `appcast.xml` whose release notes are the changelog section.
+4. `scripts/publish.sh` creates the GitHub release as a draft with the DMG, its `.sha256` and `appcast.xml`, checks the upload, then publishes it as the latest release. Releases here are immutable: a published release can't take new assets and its tag can't be reused, so never publish before the assets are attached.
+
+One-time setup per Mac: the Developer ID Application certificate; notarization credentials (`xcrun notarytool store-credentials harness-butler-notary …`); and the Sparkle EdDSA private key (keychain account `harness-butler`; its public half is `SUPublicEDKey` in `project.yml`). Back that key up with Sparkle's `generate_keys --account harness-butler -x <file>` and keep the file somewhere safe. Without it, installed copies can't be updated.

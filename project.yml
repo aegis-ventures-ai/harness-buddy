@@ -11,12 +11,16 @@ options:
 packages:
   HarnessButlerKit:
     path: Packages/HarnessButlerKit
+  # App self-update (appcast + EdDSA-signed DMGs on GitHub releases). Pinned; bump deliberately.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: 1.0.0
-    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 1.1.0
+    CURRENT_PROJECT_VERSION: 2
     DEAD_CODE_STRIPPING: YES
 
 targets:
@@ -27,6 +31,7 @@ targets:
       - path: App/HarnessButler
     dependencies:
       - package: HarnessButlerKit
+      - package: Sparkle
     info:
       path: App/HarnessButler/Info.plist
       properties:
@@ -39,6 +44,19 @@ targets:
         # Menubar-only: no Dock icon, no main menu.
         LSUIElement: true
         NSPrincipalClass: NSApplication
+        # Sparkle (app self-update): the appcast is attached to the latest GitHub release, and
+        # every update must carry an EdDSA signature from this key as well as our Developer ID.
+        SUFeedURL: https://github.com/aegis-ventures-ai/harness-buddy/releases/latest/download/appcast.xml
+        SUPublicEDKey: 2e5ZQNI6kGVSGJkiqCAMH772gpdVnTfhdWv+KkgGaXA=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUAllowsAutomaticUpdates: true
+        SUAutomaticallyUpdate: false
+        SUVerifyUpdateBeforeExtraction: true
+        # The appcast itself must carry a valid EdDSA signature (generate_appcast adds it).
+        SURequireSignedFeed: true
+        # No telemetry: Sparkle never sends a system profile.
+        SUEnableSystemProfiling: false
     entitlements:
       # Non-sandboxed by design (requirements §6): the app spawns /usr/bin/security and the
       # harness CLIs and reads their home directories. Hardened Runtime + notarization still apply.

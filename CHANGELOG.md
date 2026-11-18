@@ -4,6 +4,25 @@ All notable changes to Harness Butler are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-18
+
+### Added
+- **Open at login**: a new General page in Settings can add Harness Butler to your login items. It shows when macOS
+  needs your approval and links to System Settings → General → Login Items.
+- **Automatic app updates**, with Sparkle. Harness Butler checks once a day for a new release and asks before
+  installing it. You can choose to download and install updates automatically (applied when the app quits), turn the
+  daily check off, or check now from Settings → General.
+  - Each update is a DMG signed with Developer ID and notarized by Apple. It must also carry an EdDSA signature from
+    Harness Butler's update key, and the update feed itself is signed.
+  - The check reads `appcast.xml` from the latest GitHub release. No system profile or usage data is sent.
+  - Debug builds never update themselves.
+
+### Changed
+- Releases are built with `scripts/release.sh` (signed, notarized, stapled DMG plus signed appcast) and published
+  with `scripts/publish.sh`, or `make release`.
+- 1.0.0 shipped without a download. 1.1.0 is the first signed build on GitHub. Install it once by hand; later
+  versions update themselves.
+
 ## [1.0.0] - 2026-11-18
 
 The first release: milestones M0–M4 from [`docs/requirements.md`](docs/requirements.md).
@@ -76,4 +95,5 @@ The first release: milestones M0–M4 from [`docs/requirements.md`](docs/require
 - Codex credits (U-6) and session-file reads (U-11) are planned for a later release.
 - Builds are ad-hoc signed. Developer ID signing and notarisation are not set up yet.
 
+[1.1.0]: https://github.com/aegis-ventures-ai/harness-buddy/releases/tag/v1.1.0
 [1.0.0]: https://github.com/aegis-ventures-ai/harness-buddy/releases/tag/v1.0.0

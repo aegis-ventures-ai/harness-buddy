@@ -3,13 +3,14 @@ import SwiftUI
 
 /// A page in the settings sidebar.
 enum SettingsPage: Hashable {
-    case subscriptions, menubar, about
+    case general, subscriptions, menubar, about
     /// A harness profile's config (C-1), by `ConfigProfile.id`.
     case profile(String)
 
-    /// `--open-settings subscriptions|menubar|about|config` (debug builds).
+    /// `--open-settings general|subscriptions|menubar|about` (debug builds).
     init?(argument: String) {
         switch argument {
+        case "general": self = .general
         case "subscriptions": self = .subscriptions
         case "menubar": self = .menubar
         case "about": self = .about
@@ -30,6 +31,8 @@ struct SettingsView: View {
     let harnesses: HarnessStore
     let config: ConfigStore
     let menuBar: MenuBarState
+    let updater: AppUpdater
+    let loginItem: LoginItem
     @Bindable var navigation: SettingsNavigation
 
     static let sidebarMinWidth: CGFloat = 200
@@ -40,6 +43,7 @@ struct SettingsView: View {
         NavigationSplitView {
             List(selection: $navigation.page) {
                 Section("App") {
+                    Label("General", systemImage: "gearshape").tag(SettingsPage.general)
                     Label("Subscriptions", systemImage: "person.2").tag(SettingsPage.subscriptions)
                     Label("Menubar", systemImage: "menubar.rectangle").tag(SettingsPage.menubar)
                     Label("About", systemImage: "info.circle").tag(SettingsPage.about)
@@ -66,6 +70,7 @@ struct SettingsView: View {
         } detail: {
             Group {
             switch navigation.page {
+            case .general: GeneralSettings(updater: updater, loginItem: loginItem)
             case .subscriptions, nil: SubscriptionsSettings(store: store)
             case .menubar: MenuBarSettings(store: store, menuBar: menuBar)
             case .about: AboutSettings()
@@ -398,6 +403,65 @@ private struct AddSubscriptionSheet: View {
         case .codex: "~/.codex"
         case .grok: "~/.grok"
         }
+    }
+}
+
+/// Open at login and the app's own updates.
+private struct GeneralSettings: View {
+    let updater: AppUpdater
+    @Bindable var loginItem: LoginItem
+
+    var body: some View {
+        Form {
+            Section("Startup") {
+                Toggle(isOn: Binding(get: { loginItem.isEnabled || loginItem.needsApproval },
+                                     set: { loginItem.setEnabled($0) })) {
+                    Text("Open Harness Butler at login")
+                    Text("Starts in the menubar when you log in. You can also change this in System Settings → General → Login Items.")
+                }
+                if loginItem.needsApproval {
+                    HStack {
+                        Label("macOS needs your approval before it opens Harness Butler at login.", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(Theme.warn)
+                        Spacer()
+                        Button("Open Login Items Settings") { loginItem.openSystemSettings() }
+                    }
+                }
+                if let error = loginItem.error {
+                    Label(error, systemImage: "xmark.octagon").foregroundStyle(.red)
+                }
+            }
+            Section("App updates") {
+                @Bindable var updater = updater
+                Toggle(isOn: $updater.checksAutomatically) {
+                    Text("Check for updates automatically")
+                    Text("Once a day, from Harness Butler's GitHub releases. Nothing about you or your usage is sent.")
+                }
+                Toggle(isOn: $updater.installsAutomatically) {
+                    Text("Download and install updates automatically")
+                    Text("Updates are installed when you quit Harness Butler. Otherwise you're asked first.")
+                }
+                .disabled(!updater.checksAutomatically)
+                HStack {
+                    Button("Check for Updates Now") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
+                    Spacer()
+                    if let lastCheck = updater.lastCheck {
+                        Text("Last checked \(lastCheck.formatted(.relative(presentation: .named)))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !updater.isAvailable {
+                    Label("Development builds don't update themselves.", systemImage: "hammer")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!updater.isAvailable)
+        }
+        .formStyle(.grouped)
+        .onAppear { loginItem.refresh() }
+        // The user may change it in System Settings while this page is open.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in loginItem.refresh() }
     }
 }
 
