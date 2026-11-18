@@ -129,7 +129,13 @@ mkdir -p "$feed_dir"
 cp "$DMG" "$feed_dir/"
 awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" { on = 1; next } /^## \[/ { on = 0 } /^\[[0-9.]+\]: / { on = 0 } on' CHANGELOG.md \
     > "$feed_dir/HarnessButler-$VERSION.md"
-"$SPARKLE_BIN/generate_appcast" --account "$SPARKLE_ACCOUNT" \
+# generate_appcast and sign_update would each trigger a keychain prompt for the key (only
+# generate_keys, which created it, may read it silently) and block an unattended run. So
+# generate_keys exports it to a private temporary file that is deleted on exit.
+key_dir="$(mktemp -d)"
+trap 'rm -rf "$key_dir"' EXIT
+(umask 077 && "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -x "$key_dir/key" >/dev/null)
+"$SPARKLE_BIN/generate_appcast" --ed-key-file "$key_dir/key" \
     --download-url-prefix "https://github.com/$REPO/releases/download/v$VERSION/" \
     --full-release-notes-url "https://github.com/$REPO/releases/tag/v$VERSION" \
     --link "https://github.com/$REPO" \
@@ -139,7 +145,8 @@ cp "$feed_dir/appcast.xml" "$OUT/appcast.xml"
 grep -q "sparkle:edSignature=" "$OUT/appcast.xml" || fail "the appcast item has no EdDSA signature"
 grep -q "<sparkle:version>$BUILD</sparkle:version>\|sparkle:version=\"$BUILD\"" "$OUT/appcast.xml" || fail "the appcast doesn't list build $BUILD"
 signature="$(grep -oE 'sparkle:edSignature="[^"]+"' "$OUT/appcast.xml" | head -1 | cut -d'"' -f2)"
-"$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" --verify "$DMG" "$signature"
+"$SPARKLE_BIN/sign_update" --ed-key-file "$key_dir/key" --verify "$DMG" "$signature"
+rm -rf "$key_dir"
 
 step "Done"
 (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
