@@ -71,10 +71,13 @@ public struct GrokACPUsageProvider: UsageProvider {
     static let unsupported = UsageIssue.unsupported("Grok usage unavailable in this version. Run /usage in grok")
 
     /// Maps a `_x.ai/billing` result to one window (weekly on the plans seen so far).
+    ///
+    /// The result is protobuf JSON, which omits zero values: at 0% used (e.g. right after a reset)
+    /// `creditUsagePercent` is absent, so its absence alongside a `currentPeriod` means 0.
     static func snapshot(from result: [String: Any], fetchedAt: Date) -> UsageSnapshot? {
-        guard let config = LenientJSON.object(result["config"]),
-              let used = LenientJSON.double(config["creditUsagePercent"]) else { return nil }
+        guard let config = LenientJSON.object(result["config"]) else { return nil }
         let period = LenientJSON.object(config["currentPeriod"])
+        guard let used = LenientJSON.double(config["creditUsagePercent"]) ?? (period == nil ? nil : 0) else { return nil }
         let start = ISO8601.date(LenientJSON.string(period?["start"]))
         let end = ISO8601.date(LenientJSON.string(period?["end"]))
         let type = LenientJSON.string(period?["type"]) ?? ""

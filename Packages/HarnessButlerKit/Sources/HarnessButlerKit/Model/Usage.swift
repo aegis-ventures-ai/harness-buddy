@@ -131,7 +131,7 @@ public enum UsageIssue: Error, Hashable, Sendable, Codable {
         switch self {
         case .harnessMissing(let harness): "\(harness.displayName) isn't installed"
         case .signedOut(let hint): "Signed out. \(hint)"
-        case .tokenExpired(let hint): "Login expired. \(hint)"
+        case .tokenExpired(let hint): "Access token expired. \(hint)"
         case .rateLimited: "Provider is rate-limiting usage reads"
         case .unavailable(let detail): detail
         case .unsupported(let detail): detail
@@ -152,7 +152,7 @@ public enum UsageIssue: Error, Hashable, Sendable, Codable {
     }
 }
 
-/// What one fetch returns: fresh data, an issue, or both (e.g. a cached snapshot plus "login expired").
+/// What one fetch returns: fresh data, an issue, or both (e.g. a cached snapshot plus "access token expired").
 public struct UsageReport: Sendable {
     public var snapshot: UsageSnapshot?
     public var issue: UsageIssue?

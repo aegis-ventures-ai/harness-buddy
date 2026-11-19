@@ -54,9 +54,19 @@ public enum Harness: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Command the user runs to sign in, shown in "signed out" hints.
     public var loginHint: String {
         switch self {
-        case .claude: "Run `claude` to sign in or refresh"
+        case .claude: "Run `claude` to sign in"
         case .codex: "Run `codex login`"
         case .grok: "Run `grok login`"
+        }
+    }
+
+    /// What renews an expired access token, shown in "token expired" hints. The harness refreshes
+    /// its own token the next time it's used; the user doesn't need to sign in again.
+    public var refreshHint: String {
+        switch self {
+        case .claude: "Use Claude Code with this account to refresh it"
+        case .codex: "Use Codex with this account to refresh it"
+        case .grok: "Use Grok with this account to refresh it"
         }
     }
 

@@ -113,13 +113,13 @@ final class StubURLProtocol: URLProtocol {
     @Test func rejectedTokenIsNotRetriedUntilTheCredentialChanges() async {
         StubURLProtocol.status = 401
         let first = await provider.fetch(subscription, context: context())
-        #expect(first.issue == .tokenExpired(hint: Harness.claude.loginHint))
+        #expect(first.issue == .tokenExpired(hint: Harness.claude.refreshHint))
         #expect(fake.reads == 1 && StubURLProtocol.requests == 1)
 
         // Same credential version: no Keychain read, no request.
         StubURLProtocol.status = 200
         let second = await provider.fetch(subscription, context: context())
-        #expect(second.issue == .tokenExpired(hint: Harness.claude.loginHint))
+        #expect(second.issue == .tokenExpired(hint: Harness.claude.refreshHint))
         #expect(fake.reads == 1 && StubURLProtocol.requests == 1)
 
         // Claude Code refreshed the token: try again.
@@ -142,7 +142,7 @@ final class StubURLProtocol: URLProtocol {
         StubURLProtocol.status = 401
         _ = await provider.fetch(subscription, context: context())
         let second = await provider.fetch(subscription, context: context())
-        #expect(second.issue == .tokenExpired(hint: Harness.claude.loginHint))
+        #expect(second.issue == .tokenExpired(hint: Harness.claude.refreshHint))
         #expect(StubURLProtocol.requests == 1)
         // A new token is a new credential version: try again.
         fake.state.withLock { $0.token = "new-token" }

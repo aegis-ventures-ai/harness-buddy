@@ -38,7 +38,7 @@ public struct ClaudeUsageProvider: UsageProvider {
             configDirOverride: subscription.homeOverride, configDir: configDir, environment: environment
         )
         if rejected.isRejected(service, version: ClaudeRejectedCredentials.version(date: credentialDate)) {
-            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
+            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.refreshHint))
         }
 
         let credentials: ClaudeCredentials
@@ -59,12 +59,12 @@ public struct ClaudeUsageProvider: UsageProvider {
         // Without a modification date, the token itself identifies the credential version.
         let version = ClaudeRejectedCredentials.version(date: credentialDate) ?? ClaudeRejectedCredentials.version(token: credentials.accessToken)
         if credentialDate == nil, rejected.isRejected(service, version: version) {
-            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
+            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.refreshHint))
         }
 
         if let expiresAt = credentials.expiresAt, expiresAt <= context.now.addingTimeInterval(60) {
             rejected.reject(service, version: version)
-            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
+            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.refreshHint))
         }
 
         let plan = ClaudeUsageParser.planName(
@@ -102,7 +102,7 @@ public struct ClaudeUsageProvider: UsageProvider {
             ))
         case 401:
             rejected.reject(service, version: version)
-            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.loginHint))
+            return UsageReport(snapshot: cache.snapshot, issue: .tokenExpired(hint: Harness.claude.refreshHint))
         case 403, 429:
             let retryAfter = RetryAfter.parse((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "retry-after"))
             return UsageReport(snapshot: cache.snapshot, issue: .rateLimited(retryAfter: retryAfter))

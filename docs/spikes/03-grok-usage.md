@@ -56,6 +56,8 @@ Date: 2026-11-17 · Grok Build 1.0.88 (`grok 1.0.88 (2fe3608f7398) [stable]`, se
     "isUnifiedBillingUser": true,
     "billingPeriodStart": "<iso8601>", "billingPeriodEnd": "<iso8601>" },
   "subscription_tier": "SuperGrok" }
+// The result is protobuf JSON, so zero values are omitted: at 0% used (seen 2026-11-19, right after
+// the weekly reset) creditUsagePercent is absent. Read its absence next to currentPeriod as 0.
 // Optional fields in the binary's structs: monthlyLimit, onDemandCap, onDemandUsed,
 // history[{billingCycle{month}, includedUsed, totalUsed}], on_demand_enabled.
 // Tier strings: supergrok_lite | supergrok | supergrok_plus | supergrok_heavy | x_premium* | api_key

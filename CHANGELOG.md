@@ -4,6 +4,15 @@ All notable changes to Harness Butler are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-11-19
+
+### Fixed
+- **Grok** no longer shows "Grok usage unavailable in this version" at 0% usage. Grok leaves the usage percentage out of
+  its response when it is zero, for example right after the weekly reset; Harness Butler now reads that as 0%.
+- **Claude**: an expired access token now reads "Access token expired. Use Claude Code with this account to refresh
+  it" instead of "Login expired". The token lasts a few hours and Claude Code renews it the next time you use that
+  account, so you don't need to sign in again.
+
 ## [1.1.0] - 2026-11-18
 
 ### Added
@@ -95,5 +104,6 @@ The first release: milestones M0–M4 from [`docs/requirements.md`](docs/require
 - Codex credits (U-6) and session-file reads (U-11) are planned for a later release.
 - Builds are ad-hoc signed. Developer ID signing and notarisation are not set up yet.
 
+[1.1.1]: https://github.com/aegis-ventures-ai/harness-buddy/releases/tag/v1.1.1
 [1.1.0]: https://github.com/aegis-ventures-ai/harness-buddy/releases/tag/v1.1.0
 [1.0.0]: https://github.com/aegis-ventures-ai/harness-buddy/releases/tag/v1.0.0

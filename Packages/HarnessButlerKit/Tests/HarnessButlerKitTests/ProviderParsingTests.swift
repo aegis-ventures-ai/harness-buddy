@@ -198,8 +198,24 @@ private func json(_ text: String) throws -> [String: Any] {
         #expect(abs((window.duration ?? 0) - 7 * 86400) < 0.001)
     }
 
+    @Test func treatsMissingPercentAsZeroAfterReset() throws {
+        // Real response at 0% used: protobuf JSON drops the zero-valued creditUsagePercent.
+        let result = try json("""
+        {"config": {"currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "start": "2026-11-19T09:15:07.330+00:00", "end": "2026-11-26T09:15:07.330+00:00"},
+           "prepaidBalance": {"val": 0}, "isUnifiedBillingUser": true,
+           "billingPeriodStart": "2026-11-19T09:15:07.330+00:00", "billingPeriodEnd": "2026-11-26T09:15:07.330+00:00"},
+         "subscription_tier": "SuperGrok"}
+        """)
+        let snapshot = try #require(GrokACPUsageProvider.snapshot(from: result, fetchedAt: .now))
+        let window = try #require(snapshot.windows.first)
+        #expect(window.usedPercent == 0)
+        #expect(window.label == "weekly")
+        #expect(window.resetsAt == ISO8601.date("2026-11-26T09:15:07.330+00:00"))
+    }
+
     @Test func rejectsUnexpectedShape() throws {
         #expect(GrokACPUsageProvider.snapshot(from: try json(#"{"something": 1}"#), fetchedAt: .now) == nil)
+        #expect(GrokACPUsageProvider.snapshot(from: try json(#"{"config": {"prepaidBalance": {"val": 0}}}"#), fetchedAt: .now) == nil)
     }
 }
 
