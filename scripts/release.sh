@@ -53,12 +53,22 @@ fi
 step "Building $APP_NAME $VERSION ($BUILD), Release, signed for team $TEAM_ID"
 rm -rf "$OUT"
 mkdir -p "$OUT"
+# xcodebuild writes the app's package pins (Sparkle) into the kit's Package.resolved, which leaves
+# the tree dirty and makes publish.sh refuse to run. Put the committed file back afterwards.
+resolved=Packages/HarnessButlerKit/Package.resolved
+resolved_backup="$(mktemp)"
+cp "$resolved" "$resolved_backup"
+restore_resolved() {
+    if [ -f "$resolved_backup" ]; then cp "$resolved_backup" "$resolved" && rm -f "$resolved_backup"; fi
+}
+trap restore_resolved EXIT
 xcodegen generate --quiet
 xcodebuild -project HarnessButler.xcodeproj -scheme HarnessButler -configuration Release \
     -derivedDataPath "$OUT/derived" -destination "generic/platform=macOS" -quiet \
     CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" DEVELOPMENT_TEAM="$TEAM_ID" \
     OTHER_CODE_SIGN_FLAGS="--timestamp" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
     build
+restore_resolved
 
 step "Signing Sparkle's helpers"
 # Xcode signs the framework but leaves its helpers ad-hoc, which notarization rejects. Inside out:
@@ -100,6 +110,9 @@ ln -s /Applications "$stage/Applications"
 hdiutil create -quiet -volname "$APP_NAME $VERSION" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$DMG"
 codesign --sign "$IDENTITY" --timestamp "$DMG"
 codesign --verify --verbose=2 "$DMG"
+# hdiutil create has once written a corrupt image that still signed fine; notarytool then rejected
+# it as "not a UDIF disk image". Check the image's checksums before spending a notarization on it.
+hdiutil verify -quiet "$DMG" || fail "$DMG is corrupt (hdiutil verify failed); run the script again"
 
 if [ "${SKIP_NOTARIZE:-0}" = 1 ]; then
     step "Skipping notarization and the appcast (SKIP_NOTARIZE=1): don't publish this DMG"
@@ -133,7 +146,7 @@ awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" { on = 1; next } /^## \[/ { on = 0 }
 # generate_keys, which created it, may read it silently) and block an unattended run. So
 # generate_keys exports it to a private temporary file that is deleted on exit.
 key_dir="$(mktemp -d)"
-trap 'rm -rf "$key_dir"' EXIT
+trap 'restore_resolved; rm -rf "$key_dir"' EXIT
 (umask 077 && "$SPARKLE_BIN/generate_keys" --account "$SPARKLE_ACCOUNT" -x "$key_dir/key" >/dev/null)
 "$SPARKLE_BIN/generate_appcast" --ed-key-file "$key_dir/key" \
     --download-url-prefix "https://github.com/$REPO/releases/download/v$VERSION/" \
